@@ -11,6 +11,7 @@ library
   hs-source-dirs:  src
   build-depends:   base >= 4, bytestring, array, containers, utf8-string, network, hslogger
   ghc-options:     -Wall -O2 -funbox-strict-fields
+  extensions:      DeriveDataTypeable
   exposed-modules:
         Taglib.Ascii, Taglib.BinaryInput, Taglib.BinaryIO, Taglib.BinaryIOCommon,
         Taglib.BinaryOutput, Taglib.ItemData, Taglib.Signatures,
@@ -18,4 +19,5 @@ library
         Taglib.Ape.ApeHeader, Taglib.Ape.ApeItem, Taglib.Ape.ApeTag,
         Taglib.Id3v1.Genres, Taglib.Id3v1.Id3v1Tag,
         Taglib.Vorbis.VorbisComment, Taglib.Vorbis.VorbisItem
+  other-modules:   Taglib.Exceptions
 
