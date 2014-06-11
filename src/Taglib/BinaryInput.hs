@@ -7,6 +7,7 @@
 -- is important.
 module Taglib.BinaryInput where
 
+import Control.Exception(throwIO)
 import Control.Monad(when)
 import Data.Bits
 import Data.Word
@@ -15,6 +16,7 @@ import System.IO
 import Data.Array.IO
 import qualified Data.ByteString as BS
 
+import Taglib.Exceptions
 import Taglib.BinaryIOCommon
 
 -- | Combines a low-order and a high-order byte into a word.
@@ -38,15 +40,6 @@ getBytes32 (dw1, dw2, dw3, dw4) =
         dw2i = fromIntegral dw2
         dw3i = fromIntegral dw3
         dw4i = fromIntegral dw4
-
--- | Reads four bytes (double word) from a specified index of a byte array.
-readDWordFromArray :: Buffer -> Int -> IO (Word8, Word8, Word8, Word8)
-readDWordFromArray buf i = do
-    b1 <- readArray buf i
-    b2 <- readArray buf (i + 1)
-    b3 <- readArray buf (i + 2)
-    b4 <- readArray buf (i + 3)
-    return (b1, b2, b3, b4)
 
 -- | Extracts a double word from a specified index of a byte array.
 --
@@ -106,8 +99,7 @@ read16LE handle = do
 read16BE :: Handle -> IO Word16
 read16BE handle = do
     arr <- newArray_ (0, 2) :: IO Buffer
-    bytesRead <- hGetArray handle arr 2
-    when (bytesRead /= 2) (ioError (userError "Could not read enough bytes from input"))
+    readToBuffer arr handle 2
     rev2 arr 0
     get16LE arr 0
 
@@ -115,16 +107,14 @@ read16BE handle = do
 read32LE :: Handle -> IO Word32
 read32LE handle = do
     arr <- newArray_ (0, 4) :: IO Buffer
-    bytesRead <- hGetArray handle arr 4
-    when (bytesRead /= 4) (ioError (userError "Could not read enough bytes from input"))
+    readToBuffer arr handle 2
     get32LE arr 0
 
 -- | Reads a double word in big endian byte order from the given handle.
 read32BE :: Handle -> IO Word32
 read32BE handle = do
     arr <- newArray_ (0, 4) :: IO Buffer
-    bytesRead <- hGetArray handle arr 4
-    when (bytesRead /= 4) (ioError (userError "Could not read enough bytes from input"))
+    readToBuffer arr handle 4
     rev4 arr 0
     get32LE arr 0    
 
@@ -134,8 +124,20 @@ readData handle count = do
     bytes <- BS.hGet handle count
     return (BS.unpack bytes)
     
+-- | Reads four bytes (double word) from a specified index of a byte array.
+readDWordFromArray :: Buffer -> Int -> IO (Word8, Word8, Word8, Word8)
+readDWordFromArray buf i = do
+    b1 <- readArray buf i
+    b2 <- readArray buf (i + 1)
+    b3 <- readArray buf (i + 2)
+    b4 <- readArray buf (i + 3)
+    return (b1, b2, b3, b4)
+    
+-- | Reads exactly the specified amount of bytes into a buffer from a handle.
+--
+-- Raises a TaglibIOException if the read failed.
 readToBuffer :: Buffer -> Handle -> Int -> IO ()
 readToBuffer buf handle n = do
     bytesRead <- hGetArray handle buf n
-    when (bytesRead /= n) (ioError (userError "Could not read enough bytes from input"))
+    when (bytesRead /= n) (throwIO (TaglibIOException "Could not read enough bytes from input"))
     return ()
