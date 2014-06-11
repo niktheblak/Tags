@@ -1,0 +1,21 @@
+name:           Tags
+version:        0.1
+license:        BSD3
+cabal-version:  >=1.2
+build-type:     Simple
+author:         Niko Korhonen
+stability:      alpha
+synopsis:       Multimedia file tagging library
+
+library
+  hs-source-dirs:  src
+  build-depends:   base >= 4, bytestring, array, containers, utf8-string, network, hslogger
+  ghc-options:     -Wall -O2 -funbox-strict-fields
+  exposed-modules:
+        Taglib.Ascii, Taglib.BinaryInput, Taglib.BinaryIO, Taglib.BinaryIOCommon,
+        Taglib.BinaryOutput, Taglib.ItemData, Taglib.Signatures,
+        Taglib.StringUtils, Taglib.StringUtilsBS,
+        Taglib.Ape.ApeHeader, Taglib.Ape.ApeItem, Taglib.Ape.ApeTag,
+        Taglib.Id3v1.Genres, Taglib.Id3v1.Id3v1Tag,
+        Taglib.Vorbis.VorbisComment, Taglib.Vorbis.VorbisItem
+
