@@ -33,17 +33,18 @@ module Taglib.Ape.ApeHeader(ApeHeader(..),
                              writeHeader,
                              readHeader) where
 
+import qualified Data.ByteString.Lazy as BS
 import Control.Exception(throw)
 import Control.Monad(when)
+import Data.Binary.Get
+import Data.Binary.Put
 import Data.Bits
 import Data.List(delete)
 import Data.Word
 import System.IO
-import Data.Array.IO
 
 import Taglib.Exceptions
 import Taglib.Signatures
-import Taglib.BinaryIO
 
 -- | The APE header data type.
 data ApeHeader
@@ -174,36 +175,37 @@ toFooter hdr =
         
 -- | Writes the header into the specified file handle.
 writeHeader :: Handle -> ApeHeader -> IO ()
-writeHeader handle header =
-    do
-        writeData handle sigApe
-        arr <- newArray_ (0, 16) :: IO Buffer
-        put32LE arr 0 (toEnum (toVersionCode $ tagVersion header))
-        put32LE arr 4 (toEnum (tagSize header))
-        put32LE arr 8 (toEnum (itemCount header))
-        put32LE arr 12 (flagsToWord32 $ headerFlags header)
-        hPutArray handle arr 16
-        put32LE arr 0 0
-        put32LE arr 4 0
-        hPutArray handle arr 8
+writeHeader handle header = BS.hPut handle headerData
+    where headerData = runPut (putApeHeader header)
 
--- | Reads an APE header from the specified file handle or raises an ioError
--- if the file doesn't contain a valid APE header.
-readHeader :: Handle -- ^ The file handle. The file must be readable but it
-                     -- does not need to be seekable. The file must be
+readHeader :: Handle -- ^ The file handle. The file must be
                      -- positioned to the beginning of the APE header before
                      -- calling this function.
     -> IO ApeHeader -- ^ The read APE header.
 readHeader handle = do
-    sig <- readData handle (length sigApe)
-    when (sig /= sigApe) (throw (TaglibInvalidKeyException "Invalid APE signature"))
-    arr <- newArray_ (0, 24) :: IO Buffer
-    readToBuffer arr handle 24
-    ver <- get32LE arr 0
-    size <- get32LE arr 4
-    count <- get32LE arr 8
-    flags <- get32LE arr 12
-    return ApeHeader { tagVersion = toApeVersion (fromEnum ver),
-        tagSize = fromEnum size,
-        itemCount = fromEnum count,
-        headerFlags = word32ToFlags flags }
+    sig <- BS.hGet handle (length sigApe)
+    when ((BS.unpack sig) /= sigApe) (throw (TaglibInvalidKeyException "Invalid APE signature"))
+    headerData <- BS.hGet handle 24
+    return $ runGet getApeHeader headerData
+
+getApeHeader :: Get ApeHeader
+getApeHeader = do
+    ver <- getWord32le
+    size <- getWord32le
+    count <- getWord32le
+    flags <- getWord32le
+    skip 8
+    return $! ApeHeader
+        (toApeVersion (fromEnum ver))
+        (fromEnum size)
+        (fromEnum count)
+        (word32ToFlags flags)
+
+putApeHeader :: ApeHeader -> Put
+putApeHeader header = do
+    putLazyByteString (BS.pack sigApe)
+    putWord32le (toEnum (toVersionCode $ tagVersion header))
+    putWord32le (toEnum (tagSize header))
+    putWord32le (toEnum (itemCount header))
+    putWord32le (flagsToWord32 $ headerFlags header)
+    putWord64le 0
