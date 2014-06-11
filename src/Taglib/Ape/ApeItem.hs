@@ -32,7 +32,7 @@
 -- specification.
 module Taglib.Ape.ApeItem(minKeyLength,
                            maxKeyLength,
-                           ApeItemData(..),
+                           ApeItemValue(..),
                            ApeItem(..),
                            Key,
                            isValidKey,
@@ -41,21 +41,22 @@ module Taglib.Ape.ApeItem(minKeyLength,
                            writeItem',
                            readItem,
                            readItems,
-                           toApeItemData,
+                           toApeItemValue,
                            toApeItem,
                            compareSize) where
 
 import qualified Codec.Binary.UTF8.String as UTF8
 import qualified Data.ByteString as BS
+import Control.Exception(throw, throwIO)
 import Data.Array.IO
 import Data.Word
 import Data.Bits
 import Data.Char
-import Debug.Trace
 import Network.URI(URI(..),parseURIReference)
 import System.IO
 import System.Log.Logger
 
+import Taglib.Exceptions
 import Taglib.ItemData
 import Taglib.Ascii
 import Taglib.BinaryIO
@@ -80,7 +81,7 @@ reservedMask = locatorMask .|. binaryMask
 type ItemFlags = Word32
 
 -- | APE item data types.
-data ApeItemData = ApeText String -- ^ UTF-8 text.
+data ApeItemValue = ApeText String -- ^ UTF-8 text.
     | ApeBinary BS.ByteString -- ^ Binary Data.
     | ApeLocator URI -- ^ Locator to external data.
     | ApeReserved BS.ByteString -- ^ Reserved for future use.
@@ -104,7 +105,7 @@ data ApeItemData = ApeText String -- ^ UTF-8 text.
 -- It may seem too strict to require a valid URI instance for constructing
 -- a 'ApeLocator' item type but it is the only way to ensure generation and
 -- storage of only APEv2 specification conformant APE items.
-data ApeItem = Ape Key ApeItemData deriving Eq
+data ApeItem = Ape Key ApeItemValue deriving Eq
 
 -- | Type for APE item key.
 --
@@ -117,27 +118,23 @@ type Key = String
 instance Show ApeItem where
     show (Ape key value) = key ++ " = " ++ show value
 
-instance Show ApeItemData where
+instance Show ApeItemValue where
     show (ApeText t) = t
     show (ApeBinary b) = "[binary data " ++ show (BS.length b) ++ " bytes]"
     show (ApeLocator l) = show l
     show (ApeReserved r) = "[binary data " ++ show (BS.length r) ++ " bytes]"
 
-instance HasItemData ApeItemData where
-    itemData (ApeText t) = Text t
-    itemData (ApeBinary b) = Binary b
-    itemData (ApeLocator l) = Text (show l)
-    itemData (ApeReserved r) = Binary r
-    serializationData (ApeText t) = BS.pack (UTF8.encode t)
-    serializationData (ApeBinary b) = b
-    serializationData (ApeLocator l) = BS.pack (UTF8.encode (show l))
-    serializationData (ApeReserved r) = r
+instance HasItemValue ApeItemValue where
+    itemValue (ApeText t) = Text t
+    itemValue (ApeBinary b) = Binary b
+    itemValue (ApeLocator l) = Text (show l)
+    itemValue (ApeReserved r) = Binary r
 
 instance TagItem ApeItem where
     key (Ape k _) = k
-    value (Ape _ v) = itemData v
+    value (Ape _ v) = itemValue v
 
-typeToFlags :: ApeItemData -> ItemFlags
+typeToFlags :: ApeItemValue -> ItemFlags
 typeToFlags (ApeText _) = utf8Mask
 typeToFlags (ApeBinary _) = binaryMask
 typeToFlags (ApeLocator _) = locatorMask
@@ -157,7 +154,7 @@ isReadOnly f = f .&. readOnlyMask /= 0
 
 -- | Gets the integer APE item flags generated from 'ApeItemData' and
 -- a read-only specifier.
-getFlags :: ApeItemData -- ^ The APE item data.
+getFlags :: ApeItemValue -- ^ The APE item data.
     -> Bool -- ^ Whether the item should be read-only.
     -> ItemFlags -- ^ The generated flags.
 getFlags item readOnly =
@@ -187,7 +184,7 @@ isValidKey key
 itemSize :: ApeItem -> Int
 itemSize (Ape key value) =
     4 + 4 + length key + 1 + dataLength value where
-        dataLength :: ApeItemData -> Int
+        dataLength :: ApeItemValue -> Int
         dataLength (ApeText text) = length (UTF8.encode text)
         dataLength (ApeBinary bdata) = BS.length bdata
         dataLength (ApeLocator uri) = length (UTF8.encode (show uri))
@@ -201,9 +198,9 @@ writeItem handle (Ape key value) =
 -- | Writes an APE item with given flags into the given handle.
 writeItem' :: Handle -> ApeItem -> Bool -> IO ()
 writeItem' handle (Ape key value) readOnly
-    | not (isValidKey key) = error "Invalid APE item key."
+    | not (isValidKey key) = throw (TaglibInvalidKeyException ("Invalid APE item key: " ++ key))
     | otherwise = 
-    let bdata = serializationData value
+    let bdata = writeApeItemValue value
         dataLen = toEnum (BS.length bdata)
         keyData = toAscii key
         flags = getFlags value readOnly
@@ -216,6 +213,12 @@ writeItem' handle (Ape key value) readOnly
         hPutChar handle '\0'            -- Zero terminator
         BS.hPut handle bdata            -- Item data
 
+writeApeItemValue :: ApeItemValue -> BS.ByteString
+writeApeItemValue (ApeText t) = BS.pack (UTF8.encode t)
+writeApeItemValue (ApeBinary b) = b
+writeApeItemValue (ApeLocator l) = BS.pack (UTF8.encode (show l))
+writeApeItemValue (ApeReserved r) = r
+
 -- | Reads and validates an APE item key from the specified handle.
 --
 -- Fails with @ioError@ in case of an IO error or of the APE item key is
@@ -223,7 +226,7 @@ writeItem' handle (Ape key value) readOnly
 readKey :: Handle -> IO Key
 readKey handle = readKeyWorker 0 where
     readKeyWorker count
-        | count > maxKeyLength = ioError (userError "Invalid APE item key.")
+        | count > maxKeyLength = throwIO (TaglibInvalidKeyException "Too long APE item key")
         | otherwise = do
             c <- hGetChar handle
             if c == '\0' then return []
@@ -239,34 +242,34 @@ readKey handle = readKeyWorker 0 where
 -- If the indicated item type is Locator and the item does not contain a valid
 -- URI string, an item with 'ApeText' data type will be returned instead.
 readItem :: Handle -> IO ApeItem
-readItem handle =
-    let getData :: BS.ByteString -> ItemFlags -> Maybe ApeItemData
-        getData dt flags
-            | isText flags = Just (ApeText (UTF8.decode (BS.unpack dt)))
-            | isBinary flags = Just (ApeBinary dt)
-            | isLocator flags =
-                let text = UTF8.decode (BS.unpack dt)
-                    uri = parseURIReference text in
-                    Just (case uri of
-                        Nothing -> trace ("The APE item has invalid URI format: " ++ text) (ApeText text)
-                        Just u -> ApeLocator u)
-            | isReserved flags = Just (ApeReserved dt)
-            | otherwise = Nothing --ioError (userError "Invalid APE item data type.")
-    in do
-        infoM "ApeItem.readItem" "Reading APE item..."
-        arr <- createBuffer 8
-        readToBuffer arr handle 8
-        dataLen <- get32LE arr 0
-        flags <- get32LE arr 4
-        key <- readKey handle
-        rawItemData <- BS.hGet handle (fromEnum dataLen)
-        case getData rawItemData flags of
-            Nothing -> ioError (userError "Invalid APE item data type.")
-            Just itemData -> do
-                let item = Ape key itemData
-                infoM "ApeItem.readItem"
-                    ("APE item read: " ++ show item)
-                return item
+readItem handle = do
+    infoM "ApeItem.readItem" "Reading APE item..."
+    arr <- createBuffer 8
+    readToBuffer arr handle 8
+    dataLen <- get32LE arr 0
+    flags <- get32LE arr 4
+    key <- readKey handle
+    rawItemData <- BS.hGet handle (fromEnum dataLen)
+    case readApeItemValue rawItemData flags of
+        Nothing -> throwIO (TaglibFormatException "Invalid APE item data")
+        Just itemData -> do
+            let item = Ape key itemData
+            infoM "ApeItem.readItem"
+                ("APE item read: " ++ show item)
+            return item
+                
+readApeItemValue :: BS.ByteString -> ItemFlags -> Maybe ApeItemValue
+readApeItemValue dt flags
+    | isText flags = Just (ApeText (UTF8.decode (BS.unpack dt)))
+    | isBinary flags = Just (ApeBinary dt)
+    | isLocator flags =
+        let text = UTF8.decode (BS.unpack dt)
+            uri = parseURIReference text in
+            Just (case uri of
+                Nothing -> ApeText text
+                Just u -> ApeLocator u)
+    | isReserved flags = Just (ApeReserved dt)
+    | otherwise = Nothing
 
 -- | Reads n APE items from the given handle.
 readItems :: Handle -> Int -> IO [ApeItem]
@@ -276,13 +279,13 @@ readItems handle count = do
     items <- readItems handle (count - 1)
     return (item : items)
 
--- | Coerces 'ItemData' to 'ApeItemData'.
+-- | Coerces 'ItemValue' to 'ApeItemValue'.
 --
 -- Since text and binary type have a direct mapping in APE tag format, no
 -- information is lost.
-toApeItemData :: ItemData -> ApeItemData
-toApeItemData (Text t) = ApeText t
-toApeItemData (Binary b) = ApeBinary b
+toApeItemValue ::ItemValue -> ApeItemValue
+toApeItemValue (Text t) = ApeText t
+toApeItemValue (Binary b) = ApeBinary b
 
 -- | Coerces a 'TagItem' to 'ApeItem'.
 --
@@ -297,7 +300,7 @@ toApeItem item
                     Text t -> ApeText t
                     Binary b -> ApeBinary b
         in Just (Ape k v)
-    | otherwise = Nothing --error "Invalid APE item key."
+    | otherwise = Nothing
 
 -- | Gives an 'Ordering' of two 'ApeItem's based on their size.
 compareSize :: ApeItem -> ApeItem -> Ordering
@@ -305,3 +308,4 @@ compareSize item1 item2
     | itemSize item1 < itemSize item2 = LT
     | itemSize item1 > itemSize item2 = GT
     | otherwise = EQ
+

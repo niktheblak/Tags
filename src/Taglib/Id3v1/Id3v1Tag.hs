@@ -42,7 +42,6 @@
 -- There is no \"genre is not set\" identifier for music genre.
 -- Usually genre number 0 (Blues) is used to mean that the genre is not set,
 -- so the genre identifier for blues is basically not usable.
--- This is another fine example of the sheer brilliance of ID3v1 design.
 --
 -- This implementation supports the 'TagItem' interface whenever
 -- appropriate. 'TagItem's with unsupported keys will be dropped from
@@ -56,7 +55,7 @@ module Taglib.Id3v1.Id3v1Tag(id3v1Length,
                              yearLength,
                              commentLength,
                              acceptedKeys,
-                             processItems,
+                             convertToId3v1Items,
                              createImage,
                              writeId3v1Tag,
                              readId3v1Tag) where
@@ -185,8 +184,8 @@ trackNumberIds = [ "TRACKNUMBER", "TRACK" ]
 --
 -- (2) Maps alternate names (such as @PERFORMER@, @DATE@, @STYLE@) for ID3v1
 -- keys to canonical ID3v1 keys
-processItems :: (TagItem a) => [a] -> [(String, String)]
-processItems items =
+convertToId3v1Items :: (TagItem a) => [a] -> [(String, String)]
+convertToId3v1Items items =
     [(convertKey (ukey i), show (value i)) | i <- items]
     where
         ukey = toUpperCase . key
@@ -204,7 +203,7 @@ processItems items =
 -- the 'TagItem' keys as keys and 'TagItem' values as values.
 toMap :: (TagItem a) => [a] -> Map.Map String String
 toMap items = Map.fromList ipairs
-    where ipairs = filterKeyValuePairs (processItems items)    
+    where ipairs = filterKeyValuePairs (convertToId3v1Items items)    
         
 -- | Generates a 128-byte binary image of an ID3v1 tag from the given
 -- list of tag items.

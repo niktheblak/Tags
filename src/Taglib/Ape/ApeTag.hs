@@ -2,6 +2,7 @@
 module Taglib.Ape.ApeTag where
 
 import Control.Exception(assert)
+import Control.Monad(when)
 import Data.List(sortBy)
 import qualified Data.Map as Map
 import System.IO
@@ -42,19 +43,19 @@ makeV2Header items useHeader useFooter =
                 itemCount = count,
                 headerFlags = flags }
 
--- | Converts a map of string keys and 'HasItemData' instances
+-- | Converts a map of string keys and 'HasItemValue' instances
 -- into a list of 'ApeItem's.
-mapToApeItems :: (HasItemData a) => Map.Map String a -> [ApeItem]
+mapToApeItems :: (HasItemValue a) => Map.Map String a -> [ApeItem]
 mapToApeItems mp =
-    let pairToApe (k, val) = Ape k (toApeItemData (itemData val))
+    let pairToApe (k, val) = Ape k (toApeItemValue (itemValue val))
         items = Map.toList mp
         validItems = filter (\(k, _) -> isValidKey k) items
     in
     map pairToApe validItems
 
--- | Converts a map of string keys and 'ApeItemData' values into
+-- | Converts a map of string keys and 'ApeItemValue' values into
 -- a list of 'ApeItem's.
-mapToList :: Map.Map String ApeItemData -> [ApeItem]
+mapToList :: Map.Map String ApeItemValue -> [ApeItem]
 mapToList mp =
     let items = Map.toList mp
         validItems = filter (\(k, _) -> isValidKey k) items
@@ -105,11 +106,10 @@ writeApeTag' handle items header =
                 writeItem handle i
                 writeItems is
         writeHeaderIf b hdr' =
-            if b then do
+            when b (do
                 debugM "ApeTag.writeApeTag'"
                     ("Writing APE header:\n" ++ show hdr')
-                writeHeader handle hdr'
-                else return ()
+                writeHeader handle hdr')
         hdr = if tagVersion header == ApeV2 then toHeader header else header
         ftr = toFooter hdr
         flags = headerFlags hdr
@@ -144,18 +144,15 @@ readApeTag :: Handle -- ^ The handle to read the APE tag from. Must be seekable
 readApeTag handle =
     let flags hdr = headerFlags hdr
         seekIf hdr =
-            if IsHeader `notElem` (flags hdr)
-            then
-                let seekSize = toInteger (fromEnum (tagSize hdr) + headerSize)
-                in do
+            when (IsHeader `notElem` (flags hdr))
+                (do
+                    let seekSize = toInteger (fromEnum (tagSize hdr) + headerSize)
                     infoM "ApeTag.readApeTag"
                         ("Found a footer; seeking back " ++ show seekSize ++ " bytes...")
-                    hSeek handle RelativeSeek (negate seekSize)
-            else return ()
+                    hSeek handle RelativeSeek (negate seekSize))
         skipFooterIf hdr =
-            if HasFooter `elem` (flags hdr)
-                then hSeek handle RelativeSeek (toInteger headerSize)
-                else return ()
+            when (HasFooter `elem` (flags hdr))
+                (hSeek handle RelativeSeek (toInteger headerSize))
     in do
         infoM "ApeTag.readApeTag" "Reading APE tag..."
         -- Read the APE header.

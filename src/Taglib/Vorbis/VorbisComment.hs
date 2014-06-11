@@ -58,14 +58,14 @@ toVorbisItems items =
 --
 -- Items whose keys are not valid Vorbis item keys or whose values are not
 -- of type 'Text' are discarded.
-toVorbisItems' :: (HasItemData a) => [(String, a)] -> VorbisComment
+toVorbisItems' :: (HasItemValue a) => [(String, a)] -> VorbisComment
 toVorbisItems' items =
     map toVorbis validItems
     where
         isValid (k, v) =
-            isValidKey k && isTextual (itemData v)
+            isValidKey k && isTextual (itemValue v)
         validItems = filter isValid items
-        toVorbis (k, v) = case itemData v of
+        toVorbis (k, v) = case itemValue v of
             Text t -> createVorbisItem k t
             _ -> error "Non-textual Vorbis item."
 
@@ -85,7 +85,7 @@ toList mp =
 --
 -- Pairs whose keys are not valid Vorbis item keys or whose values are not
 -- of type 'Text' are discarded.
-toList' :: (HasItemData a) => Map.Map String a -> VorbisComment
+toList' :: (HasItemValue a) => Map.Map String a -> VorbisComment
 toList' mp = toVorbisItems' (Map.toList mp)
 
 -- | Writes a Vorbis comment into a specified handle using the default vendor

@@ -45,7 +45,7 @@ textType tt =
         e = M.toList filtered in
     case length e of
         1 -> fst (head e)
-        otherwise -> error "Unambiguous mapping of Id3v24TextType -> TextType."
+        _ -> error "Unambiguous mapping of Id3v24TextType -> TextType."
 
 id3v24TextTypeMappings :: M.Map TextType Id3v24TextType
 id3v24TextTypeMappings = M.fromList

@@ -196,10 +196,6 @@ fromLargeSynchSafe _ = error "The argument Word8 list must have at least 5 membe
 
 encodeUnsync :: [Word8] -> [Word8]
 encodeUnsync = concatMap (\b -> if b == 0xFF then [b, 0] else [b])
-{-encodeUnsync (b : bs)
-    | b == 0xFF = b : 0 : encodeUnsync bs
-    | otherwise = b : encodeUnsync bs
-encodeUnsync [] = []-}
 
 decodeUnsync :: [Word8] -> [Word8]
 decodeUnsync (b0 : b1 : bs)

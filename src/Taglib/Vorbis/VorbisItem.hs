@@ -9,17 +9,16 @@ module Taglib.Vorbis.VorbisItem(VorbisItem,
                                  readItem) where
 
 import qualified Codec.Binary.UTF8.String as UTF8
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
+import Control.Exception(throw)
 import Data.Char
 import System.IO
 import System.Log.Logger
 
 import Taglib.Ascii
 import Taglib.BinaryIO
+import Taglib.Exceptions
 import Taglib.ItemData
-
--- type VorbisItem = (String, String)
 
 data VorbisItem = VorbisItem String String deriving (Eq, Ord)
 
@@ -30,18 +29,16 @@ instance TagItem VorbisItem where
     key (VorbisItem k _) = k
     value (VorbisItem _ v) = Text v
 
-instance HasItemData VorbisItem where
-    itemData (VorbisItem _ v) = Text v
-    serializationData (VorbisItem _ v) = BS.pack (UTF8.encode v)
+instance HasItemValue VorbisItem where
+    itemValue (VorbisItem _ v) = Text v
 
 separator :: Char
 separator = '='
 
 createVorbisItem :: String -> String -> VorbisItem
-createVorbisItem key value =
-    if isValidKey key
-        then VorbisItem key value
-        else error "Invalid Vorbis item key."
+createVorbisItem key value = if isValidKey key
+    then VorbisItem key value
+    else throw (TaglibInvalidKeyException "Invalid Vorbis item key")
 
 -- | Gets the size that a vorbis item will take when serialized.
 itemSize :: VorbisItem -> Int
