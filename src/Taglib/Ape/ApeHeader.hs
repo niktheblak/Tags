@@ -35,7 +35,6 @@ module Taglib.Ape.ApeHeader(ApeHeader(..),
 
 import qualified Data.ByteString.Lazy as BS
 import Control.Exception(throw)
-import Control.Monad(when)
 import Data.Binary.Get
 import Data.Binary.Put
 import Data.Bits
@@ -130,12 +129,13 @@ word32ToFlags flags =
         then HasHeader : worker flags
         else worker (flags .&. complement noFooterMask)
     where
-        worker 0 = []
-        worker w =
-            if isReadOnly w then ReadOnly : worker (w .&. complement readOnlyMask)
-            else if isHeader w then IsHeader : worker (w .&. complement isHeaderMask)
-            else if hasHeader w then HasHeader : worker (w .&. complement hasHeaderMask)
-            else worker (w .&. complement readOnlyMask)
+        worker w
+            | w == 0 = []
+            | otherwise =
+                if isReadOnly w then ReadOnly : worker (w .&. complement readOnlyMask)
+                else if isHeader w then IsHeader : worker (w .&. complement isHeaderMask)
+                else if hasHeader w then HasHeader : worker (w .&. complement hasHeaderMask)
+                else worker (w .&. complement readOnlyMask)
 
 isReadOnly :: Word32 -> Bool
 isHeader :: Word32 -> Bool
@@ -183,10 +183,16 @@ readHeader :: Handle -- ^ The file handle. The file must be
                      -- calling this function.
     -> IO ApeHeader -- ^ The read APE header.
 readHeader handle = do
-    sig <- BS.hGet handle (length sigApe)
-    when ((BS.unpack sig) /= sigApe) (throw (TaglibInvalidKeyException "Invalid APE signature"))
-    headerData <- BS.hGet handle 24
-    return $ runGet getApeHeader headerData
+    bs <- BS.hGet handle headerSize
+    return (readFromByteString bs)
+
+readFromByteString :: BS.ByteString -> ApeHeader
+readFromByteString bs =
+    let sig = BS.take 8 bs 
+        headerData = BS.drop 8 (BS.take (toEnum headerSize) bs) in
+    if BS.unpack sig == sigApe
+        then runGet getApeHeader headerData
+        else throw (TaglibInvalidKeyException "Invalid APE signature")
 
 getApeHeader :: Get ApeHeader
 getApeHeader = do
