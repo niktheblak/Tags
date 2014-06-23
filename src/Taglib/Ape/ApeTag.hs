@@ -3,6 +3,7 @@ module Taglib.Ape.ApeTag where
 
 import Control.Exception(assert)
 import Control.Monad(when)
+import qualified Data.ByteString.Lazy as BSL
 import Data.List(sortBy)
 import qualified Data.Map as Map
 import System.IO
@@ -100,12 +101,7 @@ writeApeTag' :: Handle -- ^ The APE tag is written to this file handle.
     -> IO ()
 
 writeApeTag' handle items header =
-    let writeItems [] = return ()
-        writeItems (i : is) =
-            do
-                writeItem handle i
-                writeItems is
-        writeHeaderIf b hdr' =
+    let writeHeaderIf b hdr' =
             when b (do
                 debugM "ApeTag.writeApeTag'"
                     ("Writing APE header:\n" ++ show hdr')
@@ -123,7 +119,7 @@ writeApeTag' handle items header =
             "ApeTag.writeApeTag'"
             "Writing APE tag items."
         -- Write the APE items
-        writeItems sortedItems
+        writeItems handle sortedItems
         -- Write the APE footer
         writeHeaderIf hasFtr ftr
         infoM
@@ -160,9 +156,18 @@ readApeTag handle =
         debugM "ApeTag.readApeTag" ("Read APE header:\n" ++ show hdr)
         -- Seek to the beginning of APE item data.
         seekIf hdr
-        -- Read the APE items.
-        items <- readItems handle (fromEnum (itemCount hdr))
+        -- Read the APE items data.
+        itemsData <- BSL.hGet handle (tagSize hdr)
+        let items = readItems itemsData (fromEnum (itemCount hdr))
         -- Skip the footer if it's present.
         skipFooterIf hdr
         infoM "ApeTag.readApeTag" "APE tag read complete."
         return (items, hdr)
+
+writeItems :: Handle -> [ApeItem] -> IO ()
+writeItems _ [] = return ()
+writeItems handle (i : is) =
+    let itemData = writeItem i
+    in do
+        BSL.hPut handle itemData
+        writeItems handle is

@@ -34,24 +34,27 @@ module Taglib.Ape.ApeItem(minKeyLength,
                            maxKeyLength,
                            ApeItemValue(..),
                            ApeItem(..),
-                           Key,
                            isValidKey,
                            itemSize,
                            writeItem,
                            writeItem',
                            readItem,
                            readItems,
-                           toApeItemValue,
                            toApeItem,
+                           toApeItemValue,
                            compareSize) where
 
 import qualified Codec.Binary.UTF8.String as UTF8
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import Control.Exception(throw, throwIO)
 import Data.Array.IO
-import Data.Word
+import Data.Binary.Get
+import Data.Binary.Put
 import Data.Bits
 import Data.Char
+import Data.Int(Int64)
+import Data.Word
 import Network.URI(URI(..),parseURIReference)
 import System.IO
 import System.Log.Logger
@@ -105,15 +108,7 @@ data ApeItemValue = ApeText String -- ^ UTF-8 text.
 -- It may seem too strict to require a valid URI instance for constructing
 -- a 'ApeLocator' item type but it is the only way to ensure generation and
 -- storage of only APEv2 specification conformant APE items.
-data ApeItem = Ape Key ApeItemValue deriving Eq
-
--- | Type for APE item key.
---
--- The item key is an ASCII text string whose length must
--- be between 2 and 255 characters and contain only characters from range
--- @0x20@ (spacebar) to @0x7F@ (tilde) inclusive. The function 'isValidKey'
--- checks if a given text string is a valid APE item key.
-type Key = String
+data ApeItem = Ape String ApeItemValue deriving Eq
 
 instance Show ApeItem where
     show (Ape key value) = key ++ " = " ++ show value
@@ -190,49 +185,34 @@ itemSize (Ape key value) =
         dataLength (ApeLocator uri) = length (UTF8.encode (show uri))
         dataLength (ApeReserved bdata) = BS.length bdata
 
--- | Writes an APE item into the specified handle.
-writeItem :: Handle -> ApeItem -> IO ()
-writeItem handle (Ape key value) =
-    writeItem' handle (Ape key value) False
+writeItem :: ApeItem -> BSL.ByteString
+writeItem item =
+    writeItem' item False
 
--- | Writes an APE item with given flags into the given handle.
-writeItem' :: Handle -> ApeItem -> Bool -> IO ()
-writeItem' handle (Ape key value) readOnly
+writeItem' :: ApeItem -> Bool -> BSL.ByteString
+writeItem' item readOnly =
+    runPut (putApeItem item readOnly)
+
+valueToByteString :: ApeItemValue -> BS.ByteString
+valueToByteString (ApeText t) = BS.pack (UTF8.encode t)
+valueToByteString (ApeBinary b) = b
+valueToByteString (ApeLocator l) = BS.pack (UTF8.encode (show l))
+valueToByteString (ApeReserved r) = r
+
+putApeItem :: ApeItem -> Bool -> Put
+putApeItem (Ape key value) readOnly
     | not (isValidKey key) = throw (TaglibInvalidKeyException ("Invalid APE item key: " ++ key))
     | otherwise = 
-    let bdata = writeApeItemValue value
-        dataLen = toEnum (BS.length bdata)
+    let itemData = valueToByteString value
+        dataLength = toEnum (BS.length itemData)
         keyData = toAscii key
         flags = getFlags value readOnly
     in do
-        arr <- createBuffer 8
-        put32LE arr 0 dataLen           -- Length of data
-        put32LE arr 4 flags             -- Item flags
-        hPutArray handle arr 8
-        writeData handle keyData        -- Item key
-        hPutChar handle '\0'            -- Zero terminator
-        BS.hPut handle bdata            -- Item data
-
-writeApeItemValue :: ApeItemValue -> BS.ByteString
-writeApeItemValue (ApeText t) = BS.pack (UTF8.encode t)
-writeApeItemValue (ApeBinary b) = b
-writeApeItemValue (ApeLocator l) = BS.pack (UTF8.encode (show l))
-writeApeItemValue (ApeReserved r) = r
-
--- | Reads and validates an APE item key from the specified handle.
---
--- Fails with @ioError@ in case of an IO error or of the APE item key is
--- malformed.
-readKey :: Handle -> IO Key
-readKey handle = readKeyWorker 0 where
-    readKeyWorker count
-        | count > maxKeyLength = throwIO (TaglibInvalidKeyException "Too long APE item key")
-        | otherwise = do
-            c <- hGetChar handle
-            if c == '\0' then return []
-                else do
-                    cs <- readKeyWorker (count + 1)
-                    return (c : cs)
+        putWord32le dataLength
+        putWord32le flags
+        putByteString (BS.pack (UTF8.encode key))
+        putWord8 0
+        putByteString itemData
 
 -- | Reads an APE item from the given handle.
 --
@@ -241,22 +221,21 @@ readKey handle = readKeyWorker 0 where
 --
 -- If the indicated item type is Locator and the item does not contain a valid
 -- URI string, an item with 'ApeText' data type will be returned instead.
-readItem :: Handle -> IO ApeItem
-readItem handle = do
-    infoM "ApeItem.readItem" "Reading APE item..."
-    arr <- createBuffer 8
-    readToBuffer arr handle 8
-    dataLen <- get32LE arr 0
-    flags <- get32LE arr 4
-    key <- readKey handle
-    rawItemData <- BS.hGet handle (fromEnum dataLen)
-    case readApeItemValue rawItemData flags of
-        Nothing -> throwIO (TaglibFormatException "Invalid APE item data")
-        Just itemData -> do
-            let item = Ape key itemData
-            infoM "ApeItem.readItem"
-                ("APE item read: " ++ show item)
-            return item
+readItem :: BSL.ByteString -> ApeItem
+readItem itemData = fst $ runGet getApeItem itemData
+
+getApeItem :: Get (ApeItem, Int64)
+getApeItem = do
+    dataLength <- getWord32le
+    flags <- getWord32le
+    keyData <- getLazyByteStringNul
+    rawItemData <- getByteString (fromEnum dataLength)
+    br <- bytesRead
+    let itemData = case readApeItemValue rawItemData flags of
+            Nothing -> throw (TaglibFormatException "Invalid APE item data")
+            Just itemData -> itemData
+    let key = UTF8.decode (BSL.unpack keyData)
+    return (Ape key itemData, br)
                 
 readApeItemValue :: BS.ByteString -> ItemFlags -> Maybe ApeItemValue
 readApeItemValue dt flags
@@ -272,12 +251,12 @@ readApeItemValue dt flags
     | otherwise = Nothing
 
 -- | Reads n APE items from the given handle.
-readItems :: Handle -> Int -> IO [ApeItem]
-readItems _ 0 = return []
-readItems handle count = do
-    item <- readItem handle
-    items <- readItems handle (count - 1)
-    return (item : items)
+readItems :: BSL.ByteString -> Int -> [ApeItem]
+readItems _ 0 = []
+readItems itemData count =
+    let (item, size) = runGet getApeItem itemData
+        remaining = BSL.drop size itemData
+    in item : readItems remaining (count - 1)
 
 -- | Coerces 'ItemValue' to 'ApeItemValue'.
 --
