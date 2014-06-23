@@ -101,12 +101,7 @@ writeApeTag' :: Handle -- ^ The APE tag is written to this file handle.
     -> IO ()
 
 writeApeTag' handle items header =
-    let writeHeaderIf b hdr' =
-            when b (do
-                debugM "ApeTag.writeApeTag'"
-                    ("Writing APE header:\n" ++ show hdr')
-                writeHeader handle hdr')
-        hdr = if tagVersion header == ApeV2 then toHeader header else header
+    let hdr = if tagVersion header == ApeV2 then toHeader header else header
         ftr = toFooter hdr
         flags = headerFlags hdr
         hasHdr = elem HasHeader flags
@@ -114,14 +109,16 @@ writeApeTag' handle items header =
         sortedItems = sortBy compareSize items
     in assert (hasHdr || hasFtr) (do
         -- Write the APE header
-        writeHeaderIf hasHdr hdr
+        when hasHdr
+            (BSL.hPut handle (writeHeader hdr))
         debugM
             "ApeTag.writeApeTag'"
             "Writing APE tag items."
         -- Write the APE items
         writeItems handle sortedItems
         -- Write the APE footer
-        writeHeaderIf hasFtr ftr
+        when hasFtr
+            (BSL.hPut handle (writeHeader ftr))
         infoM
             "ApeTag.writeApeTag'"
             "APE tag written."
@@ -152,7 +149,8 @@ readApeTag handle =
     in do
         infoM "ApeTag.readApeTag" "Reading APE tag..."
         -- Read the APE header.
-        hdr <- readHeader handle
+        headerData <- BSL.hGet handle (toEnum headerSize)
+        let hdr = readHeader headerData
         debugM "ApeTag.readApeTag" ("Read APE header:\n" ++ show hdr)
         -- Seek to the beginning of APE item data.
         seekIf hdr
