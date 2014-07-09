@@ -10,7 +10,7 @@ synopsis:       Multimedia file tagging library
 library
   hs-source-dirs:  src
   build-depends:   base >= 4, binary, bytestring, array, containers, utf8-string, network, hslogger
-  ghc-options:     -Wall -O2 -funbox-strict-fields
+  ghc-options:     -O2 -funbox-strict-fields
   extensions:      DeriveDataTypeable
   exposed-modules:
         Taglib.Ascii, Taglib.BinaryInput, Taglib.BinaryIO, Taglib.BinaryIOCommon,

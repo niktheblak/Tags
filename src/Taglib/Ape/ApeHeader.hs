@@ -33,14 +33,13 @@ module Taglib.Ape.ApeHeader(ApeHeader(..),
                              writeHeader,
                              readHeader) where
 
-import qualified Data.ByteString.Lazy as BS
+import qualified Data.ByteString.Lazy as BSL
 import Control.Exception(throw)
 import Data.Binary.Get
 import Data.Binary.Put
 import Data.Bits
 import Data.List(delete)
 import Data.Word
-import System.IO
 
 import Taglib.Exceptions
 import Taglib.Signatures
@@ -172,27 +171,20 @@ toFooter :: ApeHeader -> ApeHeader
 toFooter hdr =
     hdr { headerFlags = newFlags }
     where newFlags = delete IsHeader (headerFlags hdr)
-        
--- | Writes the header into the specified file handle.
-writeHeader :: Handle -> ApeHeader -> IO ()
-writeHeader handle header = BS.hPut handle headerData
-    where headerData = runPut (putApeHeader header)
 
-readHeader :: Handle -- ^ The file handle. The file must be
-                     -- positioned to the beginning of the APE header before
-                     -- calling this function.
-    -> IO ApeHeader -- ^ The read APE header.
-readHeader handle = do
-    bs <- BS.hGet handle headerSize
-    return (readFromByteString bs)
+writeHeader :: ApeHeader -> BSL.ByteString
+writeHeader header =
+    runPut (putApeHeader header)
 
-readFromByteString :: BS.ByteString -> ApeHeader
-readFromByteString bs =
-    let sig = BS.take 8 bs 
-        headerData = BS.drop 8 (BS.take (toEnum headerSize) bs) in
-    if BS.unpack sig == sigApe
-        then runGet getApeHeader headerData
-        else throw (TaglibInvalidKeyException "Invalid APE signature")
+readHeader :: BSL.ByteString -> ApeHeader
+readHeader header =
+    let sigLength = toEnum $ length sigApe
+        sig = BSL.take sigLength header
+    in if (BSL.unpack sig) /= sigApe
+        then throw (TaglibInvalidKeyException "Invalid APE signature")
+        else
+            let headerData = BSL.take 24 (BSL.drop sigLength header)
+            in runGet getApeHeader headerData
 
 getApeHeader :: Get ApeHeader
 getApeHeader = do
@@ -209,7 +201,7 @@ getApeHeader = do
 
 putApeHeader :: ApeHeader -> Put
 putApeHeader header = do
-    putLazyByteString (BS.pack sigApe)
+    putLazyByteString (BSL.pack sigApe)
     putWord32le (toEnum (toVersionCode $ tagVersion header))
     putWord32le (toEnum (tagSize header))
     putWord32le (toEnum (itemCount header))
