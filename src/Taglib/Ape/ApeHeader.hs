@@ -28,8 +28,13 @@ module Taglib.Ape.ApeHeader(ApeHeader(..),
                              apeV2VersionCode,
                              toVersionCode,
                              toApeVersion,
+                             hasHeader,
+                             hasFooter,
+                             isHeader,
                              toHeader,
                              toFooter,
+                             getApeHeader,
+                             putApeHeader,
                              writeHeader,
                              readHeader) where
 
@@ -110,9 +115,21 @@ toVersionCode ApeV2 = apeV2VersionCode
 headerSize :: Int
 headerSize = 32
 
+-- | Gets whether the given APE tag contains a header 
+hasHeader :: ApeHeader -> Bool
+hasHeader header = HasHeader `elem` headerFlags header
+
+-- | Gets whether the given APE tag contains a footer
+hasFooter :: ApeHeader -> Bool
+hasFooter header = HasFooter `elem` headerFlags header
+
+-- | Gets whether this is an APE header or a footer
+isHeader :: ApeHeader -> Bool
+isHeader header = IsHeader `elem` headerFlags header
+
 flagsToWord32 :: [HeaderFlags] -> Word32
 flagsToWord32 flags = worker startVal flags where
-    startVal = if notElem HasFooter flags then noFooterMask else 0
+    startVal = if HasFooter `notElem` flags then noFooterMask else 0
     worker n [] = n
     worker n (f : fs) = worker (n .|. flag) fs
         where
@@ -128,6 +145,10 @@ word32ToFlags flags =
         then HasHeader : worker flags
         else worker (flags .&. complement noFooterMask)
     where
+        isReadOnly f = (f .&. readOnlyMask) /= 0
+        isHeader f = (f .&. isHeaderMask) /= 0
+        hasHeader f = (f .&. hasHeaderMask) /= 0
+        hasFooter f = (f .&. noFooterMask) == 0
         worker w
             | w == 0 = []
             | otherwise =
@@ -135,16 +156,6 @@ word32ToFlags flags =
                 else if isHeader w then IsHeader : worker (w .&. complement isHeaderMask)
                 else if hasHeader w then HasHeader : worker (w .&. complement hasHeaderMask)
                 else worker (w .&. complement readOnlyMask)
-
-isReadOnly :: Word32 -> Bool
-isHeader :: Word32 -> Bool
-hasHeader :: Word32 -> Bool
-hasFooter :: Word32 -> Bool
-
-isReadOnly f = (f .&. readOnlyMask) /= 0
-isHeader f = (f .&. isHeaderMask) /= 0
-hasHeader f = (f .&. hasHeaderMask) /= 0
-hasFooter f = (f .&. noFooterMask) == 0
 
 -- | Gets an APE tag version from the version code or errors if the version
 -- code is unknown.
@@ -180,7 +191,7 @@ readHeader :: BSL.ByteString -> ApeHeader
 readHeader header =
     let sigLength = toEnum $ length sigApe
         sig = BSL.take sigLength header
-    in if (BSL.unpack sig) /= sigApe
+    in if BSL.unpack sig /= sigApe
         then throw (TaglibInvalidKeyException "Invalid APE signature")
         else
             let headerData = BSL.take 24 (BSL.drop sigLength header)

@@ -1,17 +1,22 @@
 -- | Functions for handling APE tags as a whole.
 module Taglib.Ape.ApeTag where
 
-import Control.Exception(assert)
-import Control.Monad(when)
+import Control.Exception(throwIO)
+import Control.Monad(when, unless)
 import qualified Data.ByteString.Lazy as BSL
+import Data.Binary.Get
+import Data.Binary.Put
 import Data.List(sortBy)
 import qualified Data.Map as Map
 import System.IO
 import System.Log.Logger
 
+import Taglib.Exceptions
 import Taglib.ItemData
 import Taglib.Ape.ApeHeader
 import Taglib.Ape.ApeItem
+
+data ApeTag = ApeTag ApeHeader [ApeItem] deriving (Show, Eq)
 
 -- | Gets the total size in bytes of the APE items.
 getSize :: [ApeItem] -> Int
@@ -51,23 +56,21 @@ mapToApeItems mp =
     let pairToApe (k, val) = Ape k (toApeItemValue (itemValue val))
         items = Map.toList mp
         validItems = filter (\(k, _) -> isValidKey k) items
-    in
-    map pairToApe validItems
+    in map pairToApe validItems
 
 -- | Converts a map of string keys and 'ApeItemValue' values into
 -- a list of 'ApeItem's.
 mapToList :: Map.Map String ApeItemValue -> [ApeItem]
 mapToList mp =
     let items = Map.toList mp
-        validItems = filter (\(k, _) -> isValidKey k) items
-    in
-    [(Ape key value) | (key, value) <- validItems]
+        validItems = filter (isValidKey . fst) items
+    in [Ape key value | (key, value) <- validItems]
 
 -- | Writes the given APE items as APEv1 tag.
 writeApeV1Tag :: Handle -> [ApeItem] -> IO ()
 writeApeV1Tag handle items =
-    let hdr = makeV1Footer items in
-    do
+    let hdr = makeV1Footer items
+    in do
         infoM "ApeTag.writeApeV1Tag"
             ("Writing APEv1 tag with " ++ show (length items) ++ " items...")
         writeApeTag' handle items hdr
@@ -85,10 +88,11 @@ writeApeV1Tag handle items =
 --   [@Tag is read-only@] @False@
 writeApeV2Tag :: Handle -> [ApeItem] -> IO ()
 writeApeV2Tag handle items =
-    let hdr = makeV2Header items True True in do
-    infoM "ApeTag.writeApeV2Tag"
-        ("Writing APEv2 tag with " ++ show (length items) ++ " items with default flags...")
-    writeApeTag' handle items hdr
+    let hdr = makeV2Header items True True
+    in do
+        infoM "ApeTag.writeApeV2Tag"
+            ("Writing APEv2 tag with " ++ show (length items) ++ " items with default flags...")
+        writeApeTag' handle items hdr
 
 -- | Writes an APE tag with options obtained from the given APE header.
 --
@@ -99,17 +103,17 @@ writeApeTag' :: Handle -- ^ The APE tag is written to this file handle.
     -> ApeHeader -- ^ APE tag version and other options are obtained from this
                  -- header.
     -> IO ()
-
 writeApeTag' handle items header =
     let hdr = if tagVersion header == ApeV2 then toHeader header else header
         ftr = toFooter hdr
         flags = headerFlags hdr
-        hasHdr = elem HasHeader flags
-        hasFtr = elem HasFooter flags
         sortedItems = sortBy compareSize items
-    in assert (hasHdr || hasFtr) (do
+    in do
+        -- Check that the tag has a header or a footer
+        unless (hasHeader hdr || hasFooter hdr)
+            (throwIO (TaglibFormatException "APE tag must have a header or a footer"))
         -- Write the APE header
-        when hasHdr
+        when (hasHeader hdr)
             (BSL.hPut handle (writeHeader hdr))
         debugM
             "ApeTag.writeApeTag'"
@@ -117,12 +121,27 @@ writeApeTag' handle items header =
         -- Write the APE items
         writeItems handle sortedItems
         -- Write the APE footer
-        when hasFtr
+        when (hasFooter hdr)
             (BSL.hPut handle (writeHeader ftr))
         infoM
             "ApeTag.writeApeTag'"
             "APE tag written."
-        hFlush handle)
+        hFlush handle
+
+putApeTag :: ApeTag -> Put
+putApeTag (ApeTag header items) =
+    let hdr = if tagVersion header == ApeV2 then toHeader header else header
+        ftr = toFooter hdr
+        flags = headerFlags hdr
+        sortedItems = sortBy compareSize items
+    in do
+        unless (hasHeader hdr || hasFooter hdr)
+            (fail "APE tag must have a header or a footer")
+        when (hasHeader hdr)
+            (putApeHeader hdr)
+        mapM_ (\item -> putApeItem item False) sortedItems
+        when (hasFooter hdr)
+            (putApeHeader ftr)
 
 -- | Reads an APE tag (v1 or v2) from the given handle.
 --
@@ -132,19 +151,18 @@ writeApeTag' handle items header =
 -- footer and the stream must be seekable.
 readApeTag :: Handle -- ^ The handle to read the APE tag from. Must be seekable
                      -- if reading an APEv1 tag.
-    -> IO ([ApeItem], ApeHeader) -- ^ The APE items and the APE header.
+    -> IO ApeTag -- ^ The APE items and the APE header.
 
 readApeTag handle =
-    let flags hdr = headerFlags hdr
-        seekIf hdr =
-            when (IsHeader `notElem` (flags hdr))
+    let seekIf hdr =
+            when (isHeader hdr)
                 (do
                     let seekSize = toInteger (fromEnum (tagSize hdr) + headerSize)
                     infoM "ApeTag.readApeTag"
                         ("Found a footer; seeking back " ++ show seekSize ++ " bytes...")
                     hSeek handle RelativeSeek (negate seekSize))
         skipFooterIf hdr =
-            when (HasFooter `elem` (flags hdr))
+            when (hasFooter hdr)
                 (hSeek handle RelativeSeek (toInteger headerSize))
     in do
         infoM "ApeTag.readApeTag" "Reading APE tag..."
@@ -160,7 +178,7 @@ readApeTag handle =
         -- Skip the footer if it's present.
         skipFooterIf hdr
         infoM "ApeTag.readApeTag" "APE tag read complete."
-        return (items, hdr)
+        return (ApeTag hdr items)
 
 writeItems :: Handle -> [ApeItem] -> IO ()
 writeItems _ [] = return ()
@@ -169,3 +187,23 @@ writeItems handle (i : is) =
     in do
         BSL.hPut handle itemData
         writeItems handle is
+
+getApeTag :: Get ApeTag
+getApeTag = do
+    header <- getApeHeader
+    -- Check that we are positioned to the APE header because we can't seek
+    -- backwards within the Get monad
+    unless (isHeader header)
+        (fail "The input stream must be positioned to an APE header and not a footer")
+    let ic = itemCount header
+    items <- getApeItems ic
+    when (hasFooter header)
+        (skip (fromEnum headerSize))
+    return (ApeTag header items)
+
+getApeItems :: Int -> Get [ApeItem]
+getApeItems 0 = return []
+getApeItems n = do
+    (item, _) <- getApeItem
+    rest <- getApeItems (n - 1)
+    return (item : rest)
