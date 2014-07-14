@@ -110,10 +110,10 @@ data ApeItemValue = ApeText String -- ^ UTF-8 text.
 -- It may seem too strict to require a valid URI instance for constructing
 -- a 'ApeLocator' item type but it is the only way to ensure generation and
 -- storage of only APEv2 specification conformant APE items.
-data ApeItem = Ape String ApeItemValue deriving Eq
+data ApeItem = ApeItem String ApeItemValue deriving Eq
 
 instance Show ApeItem where
-    show (Ape key value) = key ++ " = " ++ show value
+    show (ApeItem key value) = key ++ " = " ++ show value
 
 instance Show ApeItemValue where
     show (ApeText t) = t
@@ -128,8 +128,8 @@ instance HasItemValue ApeItemValue where
     itemValue (ApeReserved r) = Binary r
 
 instance TagItem ApeItem where
-    key (Ape k _) = k
-    value (Ape _ v) = itemValue v
+    key (ApeItem k _) = k
+    value (ApeItem _ v) = itemValue v
 
 typeToFlags :: ApeItemValue -> ItemFlags
 typeToFlags (ApeText _) = utf8Mask
@@ -179,7 +179,7 @@ isValidKey key
 
 -- | Get the size in bytes a given APE item will take when serialized.
 itemSize :: ApeItem -> Int
-itemSize (Ape key value) =
+itemSize (ApeItem key value) =
     4 + 4 + length key + 1 + dataLength value where
         dataLength :: ApeItemValue -> Int
         dataLength (ApeText text) = length (UTF8.encode text)
@@ -202,7 +202,7 @@ valueToByteString (ApeLocator l) = BS.pack (UTF8.encode (show l))
 valueToByteString (ApeReserved r) = r
 
 putApeItem :: ApeItem -> Bool -> Put
-putApeItem (Ape key value) readOnly
+putApeItem (ApeItem key value) readOnly
     | not (isValidKey key) = throw (TaglibInvalidKeyException ("Invalid APE item key: " ++ key))
     | otherwise = 
     let itemData = valueToByteString value
@@ -237,7 +237,7 @@ getApeItem = do
             Nothing -> throw (TaglibFormatException "Invalid APE item data")
             Just itemData -> itemData
     let key = UTF8.decode (BSL.unpack keyData)
-    return (Ape key itemData, br)
+    return (ApeItem key itemData, br)
                 
 readApeItemValue :: BS.ByteString -> ItemFlags -> Maybe ApeItemValue
 readApeItemValue dt flags
@@ -280,7 +280,7 @@ toApeItem item
             v = case value item of
                     Text t -> ApeText t
                     Binary b -> ApeBinary b
-        in Just (Ape k v)
+        in Just (ApeItem k v)
     | otherwise = Nothing
 
 -- | Gives an 'Ordering' of two 'ApeItem's based on their size.
