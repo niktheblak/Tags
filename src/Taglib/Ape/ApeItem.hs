@@ -39,7 +39,6 @@ module Taglib.Ape.ApeItem(minKeyLength,
                            getApeItem,
                            putApeItem,
                            writeItem,
-                           writeItem',
                            readItem,
                            readItems,
                            toApeItem,
@@ -56,6 +55,7 @@ import Data.Binary.Put
 import Data.Bits
 import Data.Char
 import Data.Int(Int64)
+import Data.Maybe(fromMaybe)
 import Data.Word
 import Network.URI(URI(..),parseURIReference)
 import System.IO
@@ -110,10 +110,10 @@ data ApeItemValue = ApeText String -- ^ UTF-8 text.
 -- It may seem too strict to require a valid URI instance for constructing
 -- a 'ApeLocator' item type but it is the only way to ensure generation and
 -- storage of only APEv2 specification conformant APE items.
-data ApeItem = ApeItem String ApeItemValue deriving Eq
+data ApeItem = ApeItem String ApeItemValue Bool deriving Eq
 
 instance Show ApeItem where
-    show (ApeItem key value) = key ++ " = " ++ show value
+    show (ApeItem key value _) = key ++ " = " ++ show value
 
 instance Show ApeItemValue where
     show (ApeText t) = t
@@ -128,8 +128,8 @@ instance HasItemValue ApeItemValue where
     itemValue (ApeReserved r) = Binary r
 
 instance TagItem ApeItem where
-    key (ApeItem k _) = k
-    value (ApeItem _ v) = itemValue v
+    key (ApeItem k _ _) = k
+    value (ApeItem _ v _) = itemValue v
 
 typeToFlags :: ApeItemValue -> ItemFlags
 typeToFlags (ApeText _) = utf8Mask
@@ -154,8 +154,7 @@ isReadOnly f = f .&. readOnlyMask /= 0
 getFlags :: ApeItemValue -- ^ The APE item data.
     -> Bool -- ^ Whether the item should be read-only.
     -> ItemFlags -- ^ The generated flags.
-getFlags item readOnly =
-    flags
+getFlags item readOnly = flags
     where
         flags = typeToFlags item .|. readOnlyFlag
         readOnlyFlag = if readOnly then readOnlyMask else 0
@@ -179,7 +178,7 @@ isValidKey key
 
 -- | Get the size in bytes a given APE item will take when serialized.
 itemSize :: ApeItem -> Int
-itemSize (ApeItem key value) =
+itemSize (ApeItem key value _) =
     4 + 4 + length key + 1 + dataLength value where
         dataLength :: ApeItemValue -> Int
         dataLength (ApeText text) = length (UTF8.encode text)
@@ -189,11 +188,7 @@ itemSize (ApeItem key value) =
 
 writeItem :: ApeItem -> BSL.ByteString
 writeItem item =
-    writeItem' item False
-
-writeItem' :: ApeItem -> Bool -> BSL.ByteString
-writeItem' item readOnly =
-    runPut (putApeItem item readOnly)
+    runPut (putApeItem item)
 
 valueToByteString :: ApeItemValue -> BS.ByteString
 valueToByteString (ApeText t) = BS.pack (UTF8.encode t)
@@ -201,8 +196,8 @@ valueToByteString (ApeBinary b) = b
 valueToByteString (ApeLocator l) = BS.pack (UTF8.encode (show l))
 valueToByteString (ApeReserved r) = r
 
-putApeItem :: ApeItem -> Bool -> Put
-putApeItem (ApeItem key value) readOnly
+putApeItem :: ApeItem -> Put
+putApeItem (ApeItem key value readOnly)
     | not (isValidKey key) = throw (TaglibInvalidKeyException ("Invalid APE item key: " ++ key))
     | otherwise = 
     let itemData = valueToByteString value
@@ -216,9 +211,9 @@ putApeItem (ApeItem key value) readOnly
         putWord8 0
         putByteString itemData
 
--- | Reads an APE item from the given handle.
+-- | Reads an APE item from the given @ByteString@.
 --
--- Fails with @ioError@ in case of an IO error or of the APE item is
+-- Fails with @TaglibFormatException@ in case the APE item is
 -- malformed.
 --
 -- If the indicated item type is Locator and the item does not contain a valid
@@ -233,11 +228,11 @@ getApeItem = do
     keyData <- getLazyByteStringNul
     rawItemData <- getByteString (fromEnum dataLength)
     br <- bytesRead
-    let itemData = case readApeItemValue rawItemData flags of
-            Nothing -> throw (TaglibFormatException "Invalid APE item data")
-            Just itemData -> itemData
-    let key = UTF8.decode (BSL.unpack keyData)
-    return (ApeItem key itemData, br)
+    let value = readApeItemValue rawItemData flags
+        itemData = fromMaybe (throw (TaglibFormatException "Invalid APE item data")) value
+        key = UTF8.decode (BSL.unpack keyData)
+        readOnly = isReadOnly flags
+    return (ApeItem key itemData readOnly, br)
                 
 readApeItemValue :: BS.ByteString -> ItemFlags -> Maybe ApeItemValue
 readApeItemValue dt flags
@@ -280,7 +275,7 @@ toApeItem item
             v = case value item of
                     Text t -> ApeText t
                     Binary b -> ApeBinary b
-        in Just (ApeItem k v)
+        in Just (ApeItem k v False)
     | otherwise = Nothing
 
 -- | Gives an 'Ordering' of two 'ApeItem's based on their size.

@@ -53,7 +53,7 @@ makeV2Header items useHeader useFooter =
 -- into a list of 'ApeItem's.
 mapToApeItems :: (HasItemValue a) => Map.Map String a -> [ApeItem]
 mapToApeItems mp =
-    let pairToApe (k, val) = ApeItem k (toApeItemValue (itemValue val))
+    let pairToApe (k, val) = ApeItem k (toApeItemValue (itemValue val)) False
         items = Map.toList mp
         validItems = filter (\(k, _) -> isValidKey k) items
     in map pairToApe validItems
@@ -64,7 +64,7 @@ mapToList :: Map.Map String ApeItemValue -> [ApeItem]
 mapToList mp =
     let items = Map.toList mp
         validItems = filter (isValidKey . fst) items
-    in [ApeItem key value | (key, value) <- validItems]
+    in [ApeItem key value False | (key, value) <- validItems]
 
 -- | Writes the given APE items as APEv1 tag.
 writeApeV1Tag :: Handle -> [ApeItem] -> IO ()
@@ -115,7 +115,7 @@ putApeTag (ApeTag header items) =
             (fail "APE tag must have a header or a footer")
         when (hasHeader hdr)
             (putApeHeader hdr)
-        mapM_ (\item -> putApeItem item False) sortedItems
+        mapM_ putApeItem sortedItems
         when (hasFooter hdr)
             (putApeHeader ftr)
 
