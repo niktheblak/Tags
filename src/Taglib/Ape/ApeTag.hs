@@ -73,7 +73,7 @@ writeApeV1Tag handle items =
     in do
         infoM "ApeTag.writeApeV1Tag"
             ("Writing APEv1 tag with " ++ show (length items) ++ " items...")
-        writeApeTag' handle items hdr
+        writeApeTag' handle (ApeTag hdr items)
 
 -- | Writes the given APE items as APEv2 tag with default APE tag flags.
 --
@@ -92,47 +92,23 @@ writeApeV2Tag handle items =
     in do
         infoM "ApeTag.writeApeV2Tag"
             ("Writing APEv2 tag with " ++ show (length items) ++ " items with default flags...")
-        writeApeTag' handle items hdr
+        writeApeTag' handle (ApeTag hdr items)
 
 -- | Writes an APE tag with options obtained from the given APE header.
 --
 -- The APE tag version and header\/footer\/readonly options are obtained
 -- from the given APE header.
 writeApeTag' :: Handle -- ^ The APE tag is written to this file handle.
-    -> [ApeItem] -- ^ The APE tag items to write.
-    -> ApeHeader -- ^ APE tag version and other options are obtained from this
-                 -- header.
+    -> ApeTag -- ^ The APE tag to write.
     -> IO ()
-writeApeTag' handle items header =
-    let hdr = if tagVersion header == ApeV2 then toHeader header else header
-        ftr = toFooter hdr
-        flags = headerFlags hdr
-        sortedItems = sortBy compareSize items
-    in do
-        -- Check that the tag has a header or a footer
-        unless (hasHeader hdr || hasFooter hdr)
-            (throwIO (TaglibFormatException "APE tag must have a header or a footer"))
-        -- Write the APE header
-        when (hasHeader hdr)
-            (BSL.hPut handle (writeHeader hdr))
-        debugM
-            "ApeTag.writeApeTag'"
-            "Writing APE tag items."
-        -- Write the APE items
-        writeItems handle sortedItems
-        -- Write the APE footer
-        when (hasFooter hdr)
-            (BSL.hPut handle (writeHeader ftr))
-        infoM
-            "ApeTag.writeApeTag'"
-            "APE tag written."
-        hFlush handle
+writeApeTag' handle tag =
+    let tagData = runPut (putApeTag tag)
+    in BSL.hPut handle tagData
 
 putApeTag :: ApeTag -> Put
 putApeTag (ApeTag header items) =
     let hdr = if tagVersion header == ApeV2 then toHeader header else header
         ftr = toFooter hdr
-        flags = headerFlags hdr
         sortedItems = sortBy compareSize items
     in do
         unless (hasHeader hdr || hasFooter hdr)
