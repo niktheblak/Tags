@@ -56,23 +56,28 @@ module Taglib.Id3v1.Id3v1Tag(id3v1Length,
                              commentLength,
                              acceptedKeys,
                              convertToId3v1Items,
-                             createImage,
+                             getId3v1TagData,
                              writeId3v1Tag,
+                             readId3v1TagData,
                              readId3v1Tag) where
 
+import qualified Codec.Binary.UTF8.String as UTF8
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BSC
+import qualified Data.Map as Map
+
+import Control.Exception(throw, throwIO)
+import Control.Monad(when)
 import Data.Char
 import Data.Word
-import qualified Codec.Binary.UTF8.String as UTF8
-import qualified Data.Map as Map
 import System.IO
 import System.Log.Logger
 
+import Taglib.Exceptions
 import Taglib.ItemData
 import Taglib.Signatures
 import Taglib.StringUtils
 import Taglib.Id3v1.Genres
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as BSC
 
 -- | Length of a complete ID3v1 tag in bytes.
 id3v1Length :: Int
@@ -207,15 +212,11 @@ toMap items = Map.fromList ipairs
         
 -- | Generates a 128-byte binary image of an ID3v1 tag from the given
 -- list of tag items.
-createImage :: (TagItem a) => [a] -> BS.ByteString
-createImage = generateTagBS . toMap
-
--- | Generates a 128-byte binary image of an ID3v1 tag from the given
--- map containing tag keys and values.
-generateTagBS :: Map.Map String String -> BS.ByteString
-generateTagBS mp =
+getId3v1TagData :: (TagItem a) => [a] -> BS.ByteString
+getId3v1TagData items =
     BS.concat [sig, title, artist, album, year, comment, genre]
     where
+        mp = toMap items
         sig = BS.pack sigId3v1
         hasTrackNumber = Map.member trackNumberKey mp
         hasGenre = Map.member genreKey mp
@@ -238,33 +239,31 @@ generateTagBS mp =
                 Nothing -> [0]
             else [0])
         toArr :: String -> Int -> BS.ByteString
-        toArr [] len = truncBS BS.empty len
-        toArr s len = truncBS (BS.pack (UTF8.encode s)) len
+        toArr [] len = padWithZeroes BS.empty len
+        toArr s len = padWithZeroes (BS.pack (UTF8.encode s)) len
 
-truncBS :: BS.ByteString -> Int -> BS.ByteString
-truncBS val len =
-    if len > BS.length val then
-        val `BS.append` getZeroes (len - BS.length val)
-    else BS.take len val
+padWithZeroes :: BS.ByteString -> Int -> BS.ByteString
+padWithZeroes val len
+    | BS.length val < len =
+        let amount = len - BS.length val in
+        val `BS.append` BS.replicate amount 0
+    | otherwise = BS.take len val
     
 toTwoDigit :: Int -> String
 toTwoDigit n
     | n < 10 = show n
     | otherwise = '0' : show n
 
-getZeroes :: Int -> BS.ByteString
-getZeroes n = BS.pack (take n (repeat 0))
-
 -- | Removes items with unsupported keys from a list of 'TagItem's.
 filterTagItems :: (TagItem a) => [a] -> [a]
 filterTagItems =
-    filter (\i -> elem (toUpperCase (key i)) acceptedKeys)
+    filter (\i -> toUpperCase (key i) `elem` acceptedKeys)
 
 -- | Removes key-value pairs with unsupported keys from a list of
 -- key-value pairs.
 filterKeyValuePairs :: [(String, String)] -> [(String, String)]
 filterKeyValuePairs =
-    filter (\i -> elem (toUpperCase (fst i)) acceptedKeys)
+    filter (\i -> toUpperCase (fst i) `elem` acceptedKeys)
 
 -- | Writes the given list of 'TagItem's into the specified handle as
 -- ID3v1 tag.
@@ -273,71 +272,68 @@ filterKeyValuePairs =
 -- an unsupported key.
 writeId3v1Tag :: (TagItem a) => Handle -> [a] -> IO ()
 writeId3v1Tag handle items =
-    writeId3v1Tag' handle itemTbl
-    where itemTbl = toMap items
-    
-
-writeId3v1Tag' :: Handle -> Map.Map String String -> IO ()
-writeId3v1Tag' handle mp =
-    let tagData = generateTagBS mp in
+    let tagData = getId3v1TagData items in
     do
         infoM "Id3v1Tag.writeId3v1Tag'" "Writing ID3v1 tag..."
         BS.hPut handle tagData
 
-stringify :: [Word8] -> String
-stringify arr = [chr (fromEnum b) | b <- arr, b /= 0]
-
 -- | Drops pairs with zero-length value from a given list.
 dropEmpties :: [(String, String)] -> [(String, String)]
-dropEmpties = filter (\(_, v) -> length v > 0)
+dropEmpties = filter (not . null . snd)
 
 -- | Gets the track number from a given ByteString image of an ID3v1 tag,
 -- if it is set.
-getTrackNumberBS :: BS.ByteString -> Maybe Int
-getTrackNumberBS id3data =
+getTrackNumber :: BS.ByteString -> Maybe Int
+getTrackNumber id3data =
     if b1 == 0 && b2 /= 0 then Just (fromEnum b2) else Nothing
     where
         b1 = id3data `BS.index` trackNumberOffset - 1
         b2 = id3data `BS.index` trackNumberOffset
 
--- | Gets the track number from a given image of an ID3v1 tag, if it is set.
-getTrackNumber :: [Word8] -> Maybe Int
-getTrackNumber id3data =
-    if b1 == 0 && b2 /= 0 then Just (fromEnum b2) else Nothing
+dropZeroes :: BS.ByteString -> BS.ByteString
+dropZeroes = BS.filter (/= 0)
+
+slice :: BS.ByteString -> Int -> Int -> BS.ByteString
+slice bs length offset = BS.take length (BS.drop offset bs)
+
+sliceWithoutZeroes :: BS.ByteString -> Int -> Int -> BS.ByteString
+sliceWithoutZeroes = slice . dropZeroes
+
+stringSliceWithoutZeroes :: BS.ByteString -> Int -> Int -> String
+stringSliceWithoutZeroes bs length offset =
+    BSC.unpack $ sliceWithoutZeroes bs length offset
+
+readId3v1TagData :: BS.ByteString -> [(String, String)]
+readId3v1TagData id3data =
+    let preamb = BS.unpack (BS.take (length sigId3v1) id3data) in
+    if preamb /= sigId3v1
+        then throw (TaglibFormatException ("Invalid ID3v1 preamble: " ++ bytesToPrintableString preamb))
+        else dropEmpties finalList
     where
-        b1 = id3data !! trackNumberOffset - 1
-        b2 = id3data !! trackNumberOffset
+        getValue = stringSliceWithoutZeroes id3data
+        title = getValue titleLength titleOffset
+        artist = getValue artistLength artistOffset
+        album = getValue albumLength albumOffset
+        year = getValue yearLength yearOffset
+        comment = getValue commentLength commentOffset
+        genreCode = fromEnum (id3data `BS.index` genreOffset)
+        genre = getGenreName genreCode
+        items = [(titleKey, title),
+                (artistKey, artist),
+                (albumKey, album),
+                (yearKey, year)]
+        -- We make a concious decision to drop genre code 0 (Blues) since
+        -- it usually indicates that the genre is not set. Sorry for Blues
+        -- fans though.
+        listWithGenre = if genreCode /= 0
+            then (genreKey, genre) : items
+            else items
+        finalList = case getTrackNumber id3data of
+            Just n -> (trackNumberKey, toTwoDigit n) : listWithGenre
+            Nothing -> listWithGenre
 
 -- | Reads an ID3v1 tag from a specified handle.
 readId3v1Tag :: Handle -> IO [(String, String)]
-readId3v1Tag handle =
-    let dropZeroes str = stringify (BS.unpack str) in
-    do
-        id3data <- BS.hGet handle id3v1Length
-        let preamb = BS.take (length sigId3v1) id3data
-        if preamb /= BS.pack sigId3v1
-            then do
-                errorM "Id3v1Tag.readId3v1Tag" ("Invalid ID3v1 preamble: " ++ (getPrintables $ BSC.unpack preamb))
-                ioError (userError "Invalid ID3v1 preamble.")
-            else return ()
-        let title = dropZeroes (BS.take titleLength (BS.drop titleOffset id3data))
-            artist = dropZeroes (BS.take artistLength (BS.drop artistOffset id3data))
-            album = dropZeroes (BS.take albumLength (BS.drop albumOffset id3data))
-            year = dropZeroes (BS.take yearLength (BS.drop yearOffset id3data))
-            comment = dropZeroes (BS.take commentLength (BS.drop commentOffset id3data))
-            genreCode = fromEnum (id3data `BS.index` genreOffset)
-            genre = getGenreName genreCode
-            items = [(titleKey, title),
-                    (artistKey, artist),
-                    (albumKey, album),
-                    (yearKey, year)]
-            -- We make a concious decision to drop genre code 0 (Blues) since
-            -- it usually indicates that the genre is not set. Sorry for Blues
-            -- fans though.
-            listWithGenre = if genreCode /= 0
-                then (genreKey, genre) : items
-                else items
-            finalList = case getTrackNumberBS id3data of
-                Just n -> (trackNumberKey, toTwoDigit n) : listWithGenre
-                Nothing -> listWithGenre
-            in return (dropEmpties finalList)
+readId3v1Tag handle = do
+    id3data <- BS.hGet handle id3v1Length
+    return (readId3v1TagData id3data)
