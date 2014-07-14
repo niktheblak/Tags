@@ -251,7 +251,8 @@ padWithZeroes val len
     
 toTwoDigit :: Int -> String
 toTwoDigit n
-    | n < 10 = show n
+    | n < 0 = error "Only non-negative integers are allowed"
+    | n >= 10 = show n
     | otherwise = '0' : show n
 
 -- | Removes items with unsupported keys from a list of 'TagItem's.
