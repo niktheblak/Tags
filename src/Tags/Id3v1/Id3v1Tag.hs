@@ -74,9 +74,11 @@ import System.Log.Logger
 
 import Tags.Exceptions
 import Tags.ItemData
-import Tags.Signatures
 import Tags.StringUtils
 import Tags.Id3v1.Genres
+
+sigId3v1 :: BS.ByteString
+sigId3v1 = BSC.pack "TAG"
 
 -- | Length of a complete ID3v1 tag in bytes.
 id3v1Length :: Int
@@ -213,10 +215,9 @@ toMap items = Map.fromList ipairs
 -- list of tag items.
 getId3v1TagData :: (TagItem a) => [a] -> BS.ByteString
 getId3v1TagData items =
-    BS.concat [sig, title, artist, album, year, comment, genre]
+    BS.concat [sigId3v1, title, artist, album, year, comment, genre]
     where
         mp = toMap items
-        sig = BS.pack sigId3v1
         hasTrackNumber = Map.member trackNumberKey mp
         hasGenre = Map.member genreKey mp
         commentStr = Map.findWithDefault "" commentKey mp
@@ -305,9 +306,9 @@ stringSliceWithoutZeroes bs length offset =
 
 readId3v1TagData :: BS.ByteString -> [(String, String)]
 readId3v1TagData id3data =
-    let preamb = BS.unpack (BS.take (length sigId3v1) id3data)
+    let preamb = BS.take (BS.length sigId3v1) id3data
     in if preamb /= sigId3v1
-        then throw (TagsFormatException ("Invalid ID3v1 preamble: " ++ bytesToPrintableString preamb))
+        then throw (TagsFormatException "Invalid ID3v1 preamble")
         else dropEmpties finalList
     where
         getValue = stringSliceWithoutZeroes id3data

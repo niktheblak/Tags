@@ -39,7 +39,9 @@ module Tags.Ape.ApeHeader(ApeHeader(..),
                           readHeader) where
 
 import qualified Data.ByteString.Lazy as BSL
+import qualified Data.ByteString.Lazy.Char8 as BSLC
 import Control.Exception(throw)
+import Control.Monad(when)
 import Data.Binary.Get
 import Data.Binary.Put
 import Data.Bits
@@ -47,7 +49,9 @@ import Data.List(delete)
 import Data.Word
 
 import Tags.Exceptions
-import Tags.Signatures
+
+sigApe :: BSL.ByteString
+sigApe = BSLC.pack "APETAGEX"
 
 -- | The APE header data type.
 data ApeHeader
@@ -180,25 +184,20 @@ toHeader hdr =
 -- header flags.
 toFooter :: ApeHeader -> ApeHeader
 toFooter hdr =
-    hdr { headerFlags = newFlags }
-    where newFlags = delete IsHeader (headerFlags hdr)
+    let newFlags = delete IsHeader (headerFlags hdr)
+    in hdr { headerFlags = newFlags }
 
 writeHeader :: ApeHeader -> BSL.ByteString
 writeHeader header =
     runPut (putApeHeader header)
 
 readHeader :: BSL.ByteString -> ApeHeader
-readHeader header =
-    let sigLength = toEnum $ length sigApe
-        sig = BSL.take sigLength header
-    in if BSL.unpack sig /= sigApe
-        then throw (TagsInvalidKeyException "Invalid APE signature")
-        else
-            let headerData = BSL.take 24 (BSL.drop sigLength header)
-            in runGet getApeHeader headerData
+readHeader = runGet getApeHeader
 
 getApeHeader :: Get ApeHeader
 getApeHeader = do
+    sig <- getLazyByteString (BSL.length sigApe)
+    when (sig /= sigApe) (fail "Invalid APE signature")
     ver <- getWord32le
     size <- getWord32le
     count <- getWord32le
@@ -212,7 +211,7 @@ getApeHeader = do
 
 putApeHeader :: ApeHeader -> Put
 putApeHeader header = do
-    putLazyByteString (BSL.pack sigApe)
+    putLazyByteString sigApe
     putWord32le (toEnum (toVersionCode $ tagVersion header))
     putWord32le (toEnum (tagSize header))
     putWord32le (toEnum (itemCount header))

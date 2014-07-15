@@ -63,8 +63,6 @@ import System.Log.Logger
 
 import Tags.Exceptions
 import Tags.ItemData
-import Tags.Ascii
-import Tags.BinaryIO
 
 -- | The minimum length for an APE item key.
 minKeyLength :: Int
@@ -202,7 +200,6 @@ putApeItem (ApeItem key value readOnly)
     | otherwise = 
     let itemData = valueToByteString value
         dataLength = toEnum (BS.length itemData)
-        keyData = toAscii key
         flags = getFlags value readOnly
     in do
         putWord32le dataLength

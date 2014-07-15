@@ -130,16 +130,13 @@ readApeTag :: Handle -- ^ The handle to read the APE tag from. Must be seekable
     -> IO ApeTag -- ^ The APE items and the APE header.
 
 readApeTag handle =
-    let seekIf hdr =
-            when (isHeader hdr)
-                (do
-                    let seekSize = toInteger (fromEnum (tagSize hdr) + headerSize)
-                    infoM "ApeTag.readApeTag"
-                        ("Found a footer; seeking back " ++ show seekSize ++ " bytes...")
-                    hSeek handle RelativeSeek (negate seekSize))
-        skipFooterIf hdr =
-            when (hasFooter hdr)
-                (hSeek handle RelativeSeek (toInteger headerSize))
+    let seekToHeader hdr = do
+            let seekSize = toInteger (fromEnum (tagSize hdr) + headerSize)
+            infoM "ApeTag.readApeTag"
+                ("Found a footer; seeking back " ++ show seekSize ++ " bytes...")
+            hSeek handle RelativeSeek (negate seekSize)
+        skipFooter hdr =
+            hSeek handle RelativeSeek (toInteger headerSize)
     in do
         infoM "ApeTag.readApeTag" "Reading APE tag..."
         -- Read the APE header.
@@ -147,12 +144,12 @@ readApeTag handle =
         let hdr = readHeader headerData
         debugM "ApeTag.readApeTag" ("Read APE header:\n" ++ show hdr)
         -- Seek to the beginning of APE item data.
-        seekIf hdr
+        when (isHeader hdr) (seekToHeader hdr)
         -- Read the APE items data.
         itemsData <- BSL.hGet handle (tagSize hdr)
         let items = readItems itemsData (fromEnum (itemCount hdr))
         -- Skip the footer if it's present.
-        skipFooterIf hdr
+        when (hasFooter hdr) (skipFooter hdr)
         infoM "ApeTag.readApeTag" "APE tag read complete."
         return (ApeTag hdr items)
 
