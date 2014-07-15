@@ -45,7 +45,6 @@ module Tags.Ape.ApeItem(minKeyLength,
                         toApeItemValue,
                         compareSize) where
 
-import qualified Codec.Binary.UTF8.String as UTF8
 import Control.Exception(throw, throwIO)
 import Data.Array.IO
 import Data.Binary.Get
@@ -54,6 +53,9 @@ import Data.Bits
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Lazy as BSL
 import Data.Char
+import qualified Data.Encoding as Enc
+import Data.Encoding.ASCII
+import Data.Encoding.UTF8
 import Data.Int(Int64)
 import Data.Maybe(fromMaybe)
 import Data.Word
@@ -179,9 +181,9 @@ itemSize :: ApeItem -> Int
 itemSize (ApeItem key value _) =
     4 + 4 + length key + 1 + dataLength value where
         dataLength :: ApeItemValue -> Int
-        dataLength (ApeText text) = length (UTF8.encode text)
+        dataLength (ApeText text) = length (Enc.encodeString UTF8 text)
         dataLength (ApeBinary bdata) = BS.length bdata
-        dataLength (ApeLocator uri) = length (UTF8.encode (show uri))
+        dataLength (ApeLocator uri) = length (Enc.encodeString UTF8 (show uri))
         dataLength (ApeReserved bdata) = BS.length bdata
 
 writeItem :: ApeItem -> BSL.ByteString
@@ -189,9 +191,9 @@ writeItem item =
     runPut (putApeItem item)
 
 valueToByteString :: ApeItemValue -> BS.ByteString
-valueToByteString (ApeText t) = BS.pack (UTF8.encode t)
+valueToByteString (ApeText t) = Enc.encodeStrictByteString UTF8 t
 valueToByteString (ApeBinary b) = b
-valueToByteString (ApeLocator l) = BS.pack (UTF8.encode (show l))
+valueToByteString (ApeLocator l) = Enc.encodeStrictByteString UTF8 (show l)
 valueToByteString (ApeReserved r) = r
 
 putApeItem :: ApeItem -> Put
@@ -204,7 +206,7 @@ putApeItem (ApeItem key value readOnly)
     in do
         putWord32le dataLength
         putWord32le flags
-        putByteString (BS.pack (UTF8.encode key))
+        putByteString (Enc.encodeStrictByteString ASCII key)
         putWord8 0
         putByteString itemData
 
@@ -227,16 +229,16 @@ getApeItem = do
     br <- bytesRead
     let value = readApeItemValue rawItemData flags
         itemData = fromMaybe (throw (TagsFormatException "Invalid APE item data")) value
-        key = UTF8.decode (BSL.unpack keyData)
+        key = Enc.decodeLazyByteString UTF8 keyData
         readOnly = isReadOnly flags
     return (ApeItem key itemData readOnly, br)
                 
 readApeItemValue :: BS.ByteString -> ItemFlags -> Maybe ApeItemValue
 readApeItemValue dt flags
-    | isText flags = Just (ApeText (UTF8.decode (BS.unpack dt)))
+    | isText flags = Just (ApeText (Enc.decodeStrictByteString UTF8 dt))
     | isBinary flags = Just (ApeBinary dt)
     | isLocator flags =
-        let text = UTF8.decode (BS.unpack dt)
+        let text = Enc.decodeStrictByteString UTF8 dt
             uri = parseURIReference text in
             Just (case uri of
                 Nothing -> ApeText text

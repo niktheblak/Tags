@@ -10,7 +10,6 @@ module Tags.Vorbis.VorbisItem(VorbisItem,
                               writeItem,
                               readItem) where
 
-import qualified Codec.Binary.UTF8.String as UTF8
 import Control.Exception(throw)
 import Control.Monad(when)
 import qualified Data.ByteString as BS
@@ -19,6 +18,9 @@ import qualified Data.ByteString.Lazy as BSL
 import Data.Binary.Get
 import Data.Binary.Put
 import Data.Char
+import qualified Data.Encoding as Enc
+import Data.Encoding.ASCII
+import Data.Encoding.UTF8
 import System.IO
 import System.Log.Logger
 
@@ -48,7 +50,7 @@ createVorbisItem key value = if isValidKey key
 
 -- | Gets the size that a vorbis item will take when serialized.
 itemSize :: VorbisItem -> Int
-itemSize (VorbisItem key value) = length key + 1 + length (UTF8.encode value)
+itemSize (VorbisItem key value) = length key + 1 + length (Enc.encodeString UTF8 value)
 
 -- | Determines whether the given string is a valid Vorbis item key.
 isValidKey :: String -> Bool
@@ -74,8 +76,8 @@ toVorbisItem item =
 
 putVorbisItem :: VorbisItem -> Put
 putVorbisItem (VorbisItem key value) =
-    let keyData = BSC.pack key
-        valueData = BS.pack (UTF8.encode value)
+    let keyData = Enc.encodeStrictByteString ASCII key
+        valueData = Enc.encodeStrictByteString UTF8 value
         itemSize = BS.length keyData + 1 + BS.length valueData
     in do
         putWord32le (toEnum itemSize)
@@ -88,8 +90,8 @@ getVorbisItem = do
     itemSize <- getWord32le
     itemData <- getByteString (fromEnum itemSize)
     let (keyData, valueData) = BSC.span (/= separator) itemData
-        key = BSC.unpack keyData
-        value = UTF8.decode (BS.unpack (BS.tail valueData))
+        key = Enc.decodeStrictByteString ASCII keyData
+        value = Enc.decodeStrictByteString UTF8 (BS.tail valueData)
     return (VorbisItem key value)
 
 -- | Writes a Vorbis item to a specified handle.

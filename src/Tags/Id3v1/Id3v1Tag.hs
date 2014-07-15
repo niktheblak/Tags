@@ -61,12 +61,13 @@ module Tags.Id3v1.Id3v1Tag(id3v1Length,
                            readId3v1TagData,
                            readId3v1Tag) where
 
-import qualified Codec.Binary.UTF8.String as UTF8
 import Control.Exception(throw, throwIO)
 import Control.Monad(when)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
 import Data.Char
+import qualified Data.Encoding as Enc
+import Data.Encoding.ISO88591
 import qualified Data.Map as Map
 import Data.Word
 import System.IO
@@ -240,7 +241,7 @@ getId3v1TagData items =
             else [0])
         toArr :: String -> Int -> BS.ByteString
         toArr [] len = padWithZeroes BS.empty len
-        toArr s len = padWithZeroes (BS.pack (UTF8.encode s)) len
+        toArr s len = padWithZeroes (Enc.encodeStrictByteString ISO88591 s) len
 
 padWithZeroes :: BS.ByteString -> Int -> BS.ByteString
 padWithZeroes val len
