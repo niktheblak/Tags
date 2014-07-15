@@ -5,17 +5,23 @@ module Tags.Vorbis.VorbisItem(VorbisItem,
                               itemSize,
                               isValidKey,
                               toVorbisItem,
+                              getVorbisItem,
+                              putVorbisItem,
                               writeItem,
                               readItem) where
 
 import qualified Codec.Binary.UTF8.String as UTF8
 import Control.Exception(throw)
+import Control.Monad(when)
+import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
+import qualified Data.ByteString.Lazy as BSL
+import Data.Binary.Get
+import Data.Binary.Put
 import Data.Char
 import System.IO
 import System.Log.Logger
 
-import Tags.Ascii
 import Tags.BinaryIO
 import Tags.Exceptions
 import Tags.ItemData
@@ -66,17 +72,31 @@ toVorbisItem item =
             _ -> Nothing
         else Nothing
 
+putVorbisItem :: VorbisItem -> Put
+putVorbisItem (VorbisItem key value) =
+    let keyData = BSC.pack key
+        valueData = BS.pack (UTF8.encode value)
+        itemSize = BS.length keyData + 1 + BS.length valueData
+    in do
+        putWord32le (toEnum itemSize)
+        putByteString keyData
+        putWord8 (toEnum (ord separator))
+        putByteString valueData
+
+getVorbisItem :: Get VorbisItem
+getVorbisItem = do
+    itemSize <- getWord32le
+    itemData <- getByteString (fromEnum itemSize)
+    let (keyData, valueData) = BSC.span (/= separator) itemData
+        key = BSC.unpack keyData
+        value = UTF8.decode (BS.unpack (BS.tail valueData))
+    return (VorbisItem key value)
+
 -- | Writes a Vorbis item to a specified handle.
 writeItem :: Handle -> VorbisItem -> IO ()
-writeItem handle (VorbisItem key value) =
-    let asciiKey = toAscii key
-        utfData = UTF8.encode value
-        itemLen = length asciiKey + 1 + length utfData
-    in do
-        write32LE handle (toEnum itemLen)
-        writeData handle asciiKey
-        hPutChar handle separator
-        writeData handle utfData
+writeItem handle item =
+    let itemData = runPut (putVorbisItem item)
+    in BS.hPut handle (BSL.toStrict itemData)
 
 -- | Reads a Vorbis item from the specified handle.
 readItem :: Handle -> IO VorbisItem
@@ -84,13 +104,12 @@ readItem handle = do
         -- Read the item size.
         itemSize <- read32LE handle
         debugM "VorbisItem.readItem" ("Item size: " ++ show itemSize)
-        if itemSize > 65536 then
-            warningM "VorbisItem.readItem"
-                ("Item size (" ++ show itemSize ++ ") is probably invalid.")
-            else return ()
+        when (itemSize > 65536)
+            (warningM "VorbisItem.readItem"
+                ("Item size (" ++ show itemSize ++ ") is probably invalid."))
         -- Read the item data.
         itemData <- BSC.hGet handle (fromEnum itemSize)
-        let (key, value) = BSC.break (\c -> c == separator) itemData
+        let (key, value) = BSC.break (== separator) itemData
             k = BSC.unpack key
             v = BSC.unpack (BSC.tail value) in
             return (VorbisItem k v)
