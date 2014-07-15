@@ -13,11 +13,19 @@ library
   ghc-options:     -O2 -funbox-strict-fields
   extensions:      DeriveDataTypeable
   exposed-modules:
-        Tags.Ascii, Tags.BinaryInput, Tags.BinaryIO, Tags.BinaryIOCommon,
-        Tags.BinaryOutput, Tags.ItemData, Tags.Signatures,
-        Tags.StringUtils, Tags.StringUtilsBS,
-        Tags.Ape.ApeHeader, Tags.Ape.ApeItem, Tags.Ape.ApeTag,
-        Tags.Id3v1.Genres, Tags.Id3v1.Id3v1Tag,
-        Tags.Vorbis.VorbisComment, Tags.Vorbis.VorbisItem
+        Tags.BinaryInput,
+        Tags.BinaryIO,
+        Tags.BinaryIOCommon,
+        Tags.BinaryOutput,
+        Tags.ItemData,
+        Tags.StringUtils,
+        Tags.StringUtilsBS,
+        Tags.Ape.ApeHeader,
+        Tags.Ape.ApeItem,
+        Tags.Ape.ApeTag,
+        Tags.Id3v1.Genres,
+        Tags.Id3v1.Id3v1Tag,
+        Tags.Vorbis.VorbisComment,
+        Tags.Vorbis.VorbisItem
   other-modules:   Tags.Exceptions
 
