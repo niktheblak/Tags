@@ -41,6 +41,15 @@ class (Show a) => TagItem a where
     -- | Gets the 'ItemValue' representation of the data of a tag item.
     value :: a -> ItemValue
 
+data TextTagItem = TextTagItem String String deriving Eq
+
+instance Show TextTagItem where
+    show (TextTagItem key value) = key ++ "=" ++ value
+
+instance TagItem TextTagItem where
+    key (TextTagItem key _) = key
+    value (TextTagItem _ value) = Text value
+
 isTextual :: ItemValue -> Bool
 isTextual (Text _) = True
 isTextual _ = False

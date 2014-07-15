@@ -58,11 +58,12 @@ module Tags.Id3v1.Id3v1Tag(id3v1Length,
                            convertToId3v1Items,
                            getId3v1TagData,
                            writeId3v1Tag,
-                           readId3v1TagData,
-                           readId3v1Tag) where
+                           readId3v1Tag,
+                           readId3v1Tag') where
 
 import Control.Exception(throw, throwIO)
 import Control.Monad(when)
+import Data.Binary.Get
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
 import Data.Char
@@ -206,42 +207,45 @@ convertToId3v1Items items =
             | k `elem` trackNumberIds = trackNumberKey
             | otherwise = k
 
--- | Converts a list of 'TagItem' instances into a map containing
--- the 'TagItem' keys as keys and 'TagItem' values as values.
-toMap :: (TagItem a) => [a] -> Map.Map String String
-toMap items = Map.fromList ipairs
-    where ipairs = filterKeyValuePairs (convertToId3v1Items items)    
-        
 -- | Generates a 128-byte binary image of an ID3v1 tag from the given
 -- list of tag items.
 getId3v1TagData :: (TagItem a) => [a] -> BS.ByteString
-getId3v1TagData items =
+getId3v1TagData items = getId3v1TagData' mp
+    where
+        mp = Map.fromList id3v1Items
+        id3v1Items = removeInvalidItems (convertToId3v1Items items)
+        
+getId3v1TagData' :: Map.Map String String -> BS.ByteString
+getId3v1TagData' mp =
     BS.concat [sigId3v1, title, artist, album, year, comment, genre]
     where
-        mp = toMap items
         hasTrackNumber = Map.member trackNumberKey mp
         hasGenre = Map.member genreKey mp
         commentStr = Map.findWithDefault "" commentKey mp
-        title = toArr (Map.findWithDefault "" titleKey mp) titleLength
-        artist = toArr (Map.findWithDefault "" artistKey mp) artistLength
-        album = toArr (Map.findWithDefault "" albumKey mp) albumLength
-        year = toArr (Map.findWithDefault "" yearKey mp) yearLength
-        comment = if hasTrackNumber then
-            let arr = toArr commentStr (commentLength - 2)
-                n :: Int
-                n = read (mp Map.! trackNumberKey)
-                term = BSC.pack ('0' : [chr n])
-            in arr `BS.append` term
-            else toArr commentStr commentLength
+        title = encodeAndPad (Map.findWithDefault "" titleKey mp) titleLength
+        artist = encodeAndPad (Map.findWithDefault "" artistKey mp) artistLength
+        album = encodeAndPad (Map.findWithDefault "" albumKey mp) albumLength
+        year = encodeAndPad (Map.findWithDefault "" yearKey mp) yearLength
+        comment = if hasTrackNumber
+            then let trackNumber = read (mp Map.! trackNumberKey)
+                in addTrackNumberToComment commentStr trackNumber
+            else encodeAndPad commentStr commentLength
         genre = BS.pack (if hasGenre then
             let genreCode = getGenreCode (mp Map.! genreKey) in
             case genreCode of
                 Just c -> [toEnum c]
                 Nothing -> [0]
             else [0])
-        toArr :: String -> Int -> BS.ByteString
-        toArr [] len = padWithZeroes BS.empty len
-        toArr s len = padWithZeroes (Enc.encodeStrictByteString ISO88591 s) len
+
+addTrackNumberToComment :: String -> Int -> BS.ByteString
+addTrackNumberToComment comment trackNumber =
+    let arr = encodeAndPad comment (commentLength - 2)
+        term = BSC.pack ('\0' : [chr trackNumber])
+    in arr `BS.append` term
+
+encodeAndPad :: String -> Int -> BS.ByteString
+encodeAndPad [] len = padWithZeroes BS.empty len
+encodeAndPad s len = padWithZeroes (Enc.encodeStrictByteString ISO88591 s) len
 
 padWithZeroes :: BS.ByteString -> Int -> BS.ByteString
 padWithZeroes val len
@@ -263,8 +267,8 @@ filterTagItems =
 
 -- | Removes key-value pairs with unsupported keys from a list of
 -- key-value pairs.
-filterKeyValuePairs :: [(String, String)] -> [(String, String)]
-filterKeyValuePairs =
+removeInvalidItems :: [(String, String)] -> [(String, String)]
+removeInvalidItems =
     filter (\i -> toUpperCase (fst i) `elem` acceptedKeys)
 
 -- | Writes the given list of 'TagItem's into the specified handle as
@@ -301,18 +305,51 @@ slice bs length offset = BS.take length (BS.drop offset bs)
 sliceWithoutZeroes :: BS.ByteString -> Int -> Int -> BS.ByteString
 sliceWithoutZeroes = slice . dropZeroes
 
-stringSliceWithoutZeroes :: BS.ByteString -> Int -> Int -> String
-stringSliceWithoutZeroes bs length offset =
-    BSC.unpack $ sliceWithoutZeroes bs length offset
+getTr :: BS.ByteString -> Maybe Int
+getTr comment =
+    if b1 == 0 && b2 /= 0 then Just (fromEnum b2) else Nothing
+    where
+        b1 = comment `BS.index` 28
+        b2 = comment `BS.index` 29
 
-readId3v1TagData :: BS.ByteString -> [(String, String)]
-readId3v1TagData id3data =
+getId3v1 :: Get [TextTagItem]
+getId3v1 = do
+    preamb <- getByteString (BS.length sigId3v1)
+    when (preamb /= sigId3v1) (fail "Invalid ID3v1 preamble")
+    title <- getByteString titleLength
+    artist <- getByteString artistLength
+    album <- getByteString albumLength
+    year <- getByteString yearLength
+    rawComment <- getByteString commentLength
+    genreCode <- getWord8
+    let genre = if genreCode > 0
+            then Just (getGenreName (fromIntegral genreCode))
+            else Nothing
+        (trackNumber, comment) = case getTr rawComment of
+            Just n -> (Just n, BS.take 28 comment)
+            Nothing -> (Nothing, comment)
+        decode str = BSC.unpack $ dropZeroes str
+        items = [TextTagItem titleKey (decode title),
+                 TextTagItem artistKey (decode artist),
+                 TextTagItem albumKey (decode album),
+                 TextTagItem yearKey (decode year),
+                 TextTagItem commentKey (decode comment)]
+        itemsWithGenre = case genre of
+            Just genre -> TextTagItem genreKey genre : items
+            Nothing -> items
+        itemsWithTrackNumber = case trackNumber of
+            Just n -> TextTagItem trackNumberKey (show n) : items
+            Nothing -> items
+    return itemsWithTrackNumber
+
+readId3v1Values :: BS.ByteString -> [(String, String)]
+readId3v1Values id3data =
     let preamb = BS.take (BS.length sigId3v1) id3data
     in if preamb /= sigId3v1
         then throw (TagsFormatException "Invalid ID3v1 preamble")
         else dropEmpties finalList
     where
-        getValue = stringSliceWithoutZeroes id3data
+        getValue length offset = BSC.unpack $ sliceWithoutZeroes id3data length offset
         title = getValue titleLength titleOffset
         artist = getValue artistLength artistOffset
         album = getValue albumLength albumOffset
@@ -334,8 +371,13 @@ readId3v1TagData id3data =
             Just n -> (trackNumberKey, toTwoDigit n) : listWithGenre
             Nothing -> listWithGenre
 
+readId3v1Tag :: BS.ByteString -> [TextTagItem]
+readId3v1Tag id3data = [TextTagItem k v | (k, v) <- values]
+    where
+        values = readId3v1Values id3data
+
 -- | Reads an ID3v1 tag from a specified handle.
-readId3v1Tag :: Handle -> IO [(String, String)]
-readId3v1Tag handle = do
+readId3v1Tag' :: Handle -> IO [TextTagItem]
+readId3v1Tag' handle = do
     id3data <- BS.hGet handle id3v1Length
-    return (readId3v1TagData id3data)
+    return (readId3v1Tag id3data)
