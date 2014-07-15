@@ -5,8 +5,8 @@ module Tags.Id3v2.Encoding(Encoding(..),
                            encode) where
 
 import qualified Codec.Binary.UTF8.String as UTF8
+import Data.Char
 import Data.Word
-import Tags.Ascii
 
 -- | Possible text encodings for ID3v2 text frame types.
 data Encoding =
@@ -39,6 +39,6 @@ defaultEncoding = UTF8
 encode :: Encoding -> String -> [Word8]
 encode enc str =
     case enc of
-        ISO8859 -> toAscii str
+        ISO8859 -> map (fromIntegral . ord) str
         UTF8 -> UTF8.encode str
         otherwise -> error "Unknown encoding."
