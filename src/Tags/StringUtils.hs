@@ -142,10 +142,10 @@ indexOf pat str =
     worker str 0
 
 -- | Shows an integer in binary representation.
-showBinary :: (Bits a) => a -> String
+showBinary :: (FiniteBits a) => a -> String
 showBinary n = reverse b
     where
-        b = map bitToStr [0 .. bitSize n - 1]
+        b = map bitToStr [0 .. finiteBitSize n - 1]
         bitToStr i = if testBit n i then '1' else '0'
 
 -- | Inserts a separator character to every nth position in a string.
