@@ -3,3 +3,4 @@ dist/
 .settings
 .dist-buildwrapper
 cabal.sandbox.config
+.cabal-sandbox
