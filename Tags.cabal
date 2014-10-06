@@ -9,7 +9,7 @@ synopsis:       Multimedia file tagging library
 
 library
   hs-source-dirs:  src
-  build-depends:   base >= 4, binary, bytestring, array, containers, network, hslogger, encoding
+  build-depends:   base >= 4, binary, bytestring, array, containers, network-uri >= 2.6, hslogger, encoding
   ghc-options:     -O2 -funbox-strict-fields
   extensions:      DeriveDataTypeable
   exposed-modules:
